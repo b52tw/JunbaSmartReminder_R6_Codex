@@ -14,15 +14,15 @@ import org.json.*;
 
 /** Month browsing is read-only and separate from the notification-driven alarm path. */
 final class CalendarBrowser implements AutoCloseable {
-    private final Activity activity;private final Runnable redraw,records,settings,refresh;
+    private final Activity activity;private final Runnable redraw,records,settings,refresh,manual,nativeReview;
     private final Consumer<CalendarModel.Event> test,stock,link,unlink;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();private final Handler main=new Handler(Looper.getMainLooper());
     private YearMonth month=YearMonth.now();private LocalDate day=LocalDate.now();
     private CalendarRepository.Snapshot snapshot;private YearMonth loaded;
     private Map<LocalDate,List<CalendarModel.Event>> indexed=new HashMap<>();private Map<String,Integer> lamps=new HashMap<>();
     private boolean loading,closed;private String error="";private int generation,dayPage;
-    CalendarBrowser(Activity activity,Runnable redraw,Runnable records,Runnable settings,Runnable refresh,Consumer<CalendarModel.Event> test,Consumer<CalendarModel.Event> stock,Consumer<CalendarModel.Event> link,Consumer<CalendarModel.Event> unlink){
-        this.activity=activity;this.redraw=redraw;this.records=records;this.settings=settings;this.refresh=refresh;this.test=test;this.stock=stock;this.link=link;this.unlink=unlink;
+    CalendarBrowser(Activity activity,Runnable redraw,Runnable records,Runnable settings,Runnable refresh,Consumer<CalendarModel.Event> test,Consumer<CalendarModel.Event> stock,Consumer<CalendarModel.Event> link,Consumer<CalendarModel.Event> unlink,Runnable manual,Runnable nativeReview){
+        this.activity=activity;this.redraw=redraw;this.records=records;this.settings=settings;this.refresh=refresh;this.test=test;this.stock=stock;this.link=link;this.unlink=unlink;this.manual=manual;this.nativeReview=nativeReview;
         try{day=LocalDate.parse(activity.getSharedPreferences("junba_calendar_view",0).getString("day",day.toString()));month=YearMonth.from(day);}catch(Exception ignored){}
     }
     void invalidate(){generation++;loading=false;snapshot=null;loaded=null;error="";}
@@ -54,9 +54,11 @@ final class CalendarBrowser implements AutoCloseable {
                 try{activity.startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+activity.getPackageName())));}catch(Exception ignored){}
             });return;
         }
-        text(root,"🔴 已連動 Junba 系統鬧鈴　🟠 正在響鈴　○ 未連動／已移除。測試另用藍色；生日／工作以手機日曆提供資料為準。",15);
+        text(root,"🔴 已排入 Junba（原廠另需送交）　🟠 正在響鈴　○ 未連動／已移除。測試另用藍色；生日／工作以手機日曆提供資料為準。",15);
         button(root,"選擇帳號／日曆",this::accounts);
         button(root,"刷新 Google 日曆與鬧鈴連動",refresh);
+        button(root,"原廠鬧鐘：逐筆送交／核對紀錄",nativeReview);
+        button(root,"手動補入未顯示的工作／生日（不改 Google）",manual);
         text(root,CalendarLinkSync.status(activity),14);
         LinearLayout nav=new LinearLayout(activity);root.addView(nav);
         Button previous=new Button(activity);previous.setText("‹");nav.addView(previous,new LinearLayout.LayoutParams(0,-2,1));previous.setOnClickListener(v->{YearMonth m=month.minusMonths(1);choose(m.atDay(Math.min(day.getDayOfMonth(),m.lengthOfMonth())));});
@@ -83,7 +85,7 @@ final class CalendarBrowser implements AutoCloseable {
             String[] names=new String[daily.size()];for(int i=0;i<names.length;i++)names[i]=daily.get(i).title+" · "+daily.get(i).calendar.label();
             new AlertDialog.Builder(activity).setTitle("選一筆活動測試（5 秒）").setItems(names,(d,w)->test.accept(daily.get(w))).setNegativeButton("取消",null).show();
         });
-        if(daily.isEmpty())text(root,"本日沒有可讀活動。Google 工作與部分生日可能未提供給手機日曆，並不代表 Google 沒有資料。",16);
+        if(daily.isEmpty())text(root,"本日沒有可讀活動。Google 工作與部分生日可能未提供給手機日曆，可按上方手動補入，建立本機記事或送交原廠。",16);
         if(dayPage*20>=daily.size())dayPage=0;
         int pageStart=dayPage*20,pageEnd=Math.min(daily.size(),pageStart+20);
         if(daily.size()>20){
@@ -96,10 +98,15 @@ final class CalendarBrowser implements AutoCloseable {
             text(card,event.title,21);text(card,event.calendar.label(),15);
             text(card,event.allDay?"全天（依日期顯示）":java.time.format.DateTimeFormatter.ofPattern("MM/dd HH:mm").format(Instant.ofEpochMilli(event.begin).atZone(ZoneId.systemDefault()))+" 起",16);
             String reminder=event.minutes.isEmpty()?"未提供提醒設定":event.minutes.toString().replace("-1","預設時間未提供")+" 分鐘前";
-            text(card,"來源提醒："+reminder,14);
+            text(card,"來源提醒："+reminder+"；確切提醒紀錄 "+event.alertTimes.size()+" 筆",14);
+            Set<String> disabled=new HashSet<>();for(LinkModel.Request r:LinkModel.plan(Collections.singletonList(event),now,Long.MAX_VALUE))if(LinkPolicy.disabled(activity,r.id))disabled.add(r.id);
+            JSONObject outcomes;try{outcomes=new JSONObject(activity.getSharedPreferences(LinkPolicy.PREF,0).getString("sync_outcomes","{}"));}catch(JSONException e){outcomes=new JSONObject();}
+            long horizon=LocalDate.now().plusDays(91).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            LinkAudit.Report audit=LinkAudit.inspect(event,receipts,now,horizon,CalendarNotificationListener.enabled(activity),LinkPolicy.prelink(activity),AlarmStore.notificationsVisible(activity)&&ReminderStore.canExact(activity),snapshot.remindersComplete&&!snapshot.truncated,LinkPolicy.eventDisabled(activity,event.key()),disabled,outcomes);
+            text(card,audit.text(),15);
             int state=lamps.getOrDefault(event.key(),0);boolean linked=state>0;
             if(state==2)card.setBackgroundColor(0xff623b10);
-            TextView lamp=text(card,state==2?"🟠 此筆正在響鈴":linked?"🔴 已連動 Junba 系統鬧鈴":"○ 未連動／已移除連動",17);lamp.setTextColor(state==2?0xffffbc55:linked?0xffff6868:0xffbbbbbb);
+            TextView lamp=text(card,state==2?"🟠 此筆正在響鈴":linked?"🔴 已排入 Junba（原廠另需送交）":"○ 未連動／已移除連動",17);lamp.setTextColor(state==2?0xffffbc55:linked?0xffff6868:0xffbbbbbb);
             int shown=0;for(int n=0;n<receipts.length()&&shown<5;n++){JSONObject r=receipts.optJSONObject(n);
                 if(r!=null&&!LinkModel.test(r)&&CalendarModel.belongs(r,event)&&r.has("linkId")&&r.optBoolean("scheduleAccepted")){
                     text(card,(r.optBoolean("linkEnabled")?"連動時間：":"已移除：")+new java.text.SimpleDateFormat("MM/dd HH:mm",Locale.TAIWAN).format(new Date(r.optLong("when"))),14);shown++;}}
@@ -113,12 +120,12 @@ final class CalendarBrowser implements AutoCloseable {
                     text(card,record.has("testConfirmedAt")?"測試：本人已確認聽見":"測試紀錄："+CalendarModel.testStatus(record)+"，不代表 Google 已送通知",14);break;}
             }
             button(card,"測試此活動的鬧鈴連動",()->test.accept(event));
-            button(card,"交給原廠建立單筆鬧鐘…",()->stock.accept(event));
+            button(card,"送交原廠建立提醒／核對…",()->stock.accept(event));
             button(card,linked?"查看／重新連動提醒時間…":"連動此活動的提醒…",()->link.accept(event));
             if(linked)button(card,"只移除 Junba 連動（保留 Google）",()->unlink.accept(event));
         }
         button(root,"查看通知與測試紀錄",records);button(root,"通知連動與權限設定",settings);
-        text(root,"帳號勾選也控制自動預排來源。預排未來 90 天、最多 250 筆；超出或未提供時間者可自行連動。Google 原活動與通知維持不變。",14);
+        text(root,"帳號勾選也控制自動預排來源。自動預排未來 90 天活動、最多 250 筆，只建立 Junba 排程；原廠需逐筆送交。超出或未提供時間者可自行連動。Google 原活動與通知維持不變。",14);
     }
     private void grid(LinearLayout root){
         LinearLayout weekdays=new LinearLayout(activity);root.addView(weekdays);

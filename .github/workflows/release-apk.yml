@@ -80,7 +80,7 @@ jobs:
       - name: Upload verified APK only
         uses: actions/upload-artifact@v4
         with:
-          name: JunbaSmartReminder-R10-links-signed-release-APK
+          name: JunbaSmartReminder-R11-clock-signed-release-APK
           path: |
             ${{ runner.temp }}/junba-release/app-release.apk
             ${{ runner.temp }}/junba-release/SHA256SUMS.txt

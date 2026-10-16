@@ -28,7 +28,7 @@ public class MainActivity extends Activity {
     private CalendarBrowser calendarBrowser;
     private ScrollView displayedScroll;
     private String renderedPage="";
-    private int alarmPage;
+    private int alarmPage,nativePage;
     private boolean destroyed;
     private static final int EXPORT=401;
     private final Handler updates=new Handler(Looper.getMainLooper());
@@ -78,7 +78,7 @@ public class MainActivity extends Activity {
             return insets;
         });
         setContentView(frame);displayedScroll=scroll;scroll.post(()->scroll.scrollTo(0,keepY));frame.requestApplyInsets();dateFormat.setTimeZone(TimeZone.getDefault());
-        heading(content,"Junba 簡易鬧鐘 R10");text(content,"作者：峻爸",14);
+        heading(content,"Junba 簡易鬧鐘 R11");text(content,"作者：峻爸",14);
         JSONObject current=AlarmStore.current(this);
         if(current!=null){LinearLayout box=card();box.setBackgroundColor(0xff623b10);heading(box,"🟠 目前正在響鈴｜"+(LinkModel.test(current)?"測試":LinkModel.calendar(current)?"Google 日曆":"記事"));text(box,current.optString("title"),18);snoozeButtons(box,current);}
         if(!permissionsReady()&&!"settings".equals(page)){
@@ -86,17 +86,19 @@ public class MainActivity extends Activity {
         }
         if("calendar".equals(page)){
             button(content,"‹ 返回記事",()->{page="notes";render();});
-            if(calendarBrowser==null)calendarBrowser=new CalendarBrowser(this,this::render,()->{page="alarms";render();},()->{page="settings";render();},this::refreshCalendar,this::testCalendarEvent,this::stockCalendarEvent,this::linkCalendarEvent,this::unlinkCalendarEvent);
+            if(calendarBrowser==null)calendarBrowser=new CalendarBrowser(this,this::render,()->{page="alarms";render();},()->{page="settings";render();},this::refreshCalendar,this::testCalendarEvent,this::stockCalendarEvent,this::linkCalendarEvent,this::unlinkCalendarEvent,()->editor(null),this::showNative);
             calendarBrowser.render(content);return;
         }
+        if("native".equals(page)){button(content,"‹ 返回記事",()->{page="notes";render();});nativeReview();return;}
         if("alarms".equals(page)){button(content,"‹ 返回記事",()->{page="notes";render();});alarmHistory();return;}
         if("settings".equals(page)){button(content,"‹ 返回記事",()->{page="notes";render();});settings();return;}
-        text(content,"記事可連動 Junba 系統鬧鈴，或另開原廠核對。移除連動會保留 Google 原活動與通知。",16);
+        text(content,"記事可連動 Junba 鬧鈴，或另開原廠核對。移除連動會保留 Google 原活動與通知。",16);
         button(content,"＋ 新增記事鬧鐘",()->editor(null));
         if(!getPreferences(0).getString("simple_draft_token","").isEmpty())button(content,"繼續未完成記事",this::resumeDraft);
         button(content,"Google 日曆月份／帳號",()->{page="calendar";render();});
-        button(content,"開啟原廠時鐘",this::openClock);
-        button(content,"所有系統鬧鈴連動／測試",()->{page="alarms";render();});
+        button(content,"原廠鬧鐘：逐筆送交／核對紀錄",this::showNative);
+        button(content,"開啟原廠時鐘清單",this::openClock);
+        button(content,"所有 Junba 鬧鈴連動／測試",()->{page="alarms";render();});
         button(content,"日曆通知響鈴／設定",()->{page="settings";render();});
         JSONArray notes=ReminderStore.all(this);if(notes.length()==0)text(content,"尚無記事。",16);
         for(int i=notes.length()-1;i>=0;i--){
@@ -110,8 +112,8 @@ public class MainActivity extends Activity {
             if(lamp>0)text(box,"此筆已納入 Junba，可在連動清單測試與移除。",14);
             else if(note.optBoolean("remind",true))text(box,"舊版提醒設定保留，刷新時檢查未來排程。",14);
             else text(box,"記事保留，目前沒有已確認的 Junba 連動。",14);
-            if(NativeLinkStore.has(this,"note:"+id))text(box,"另有原廠建立請求；原廠是否儲存仍須核對。",14);
-            button(box,"連動 Junba 系統鬧鈴",()->{try{CalendarLinkSync.linkNote(this,note,true);toast("記事已連動；可在連動清單測試與移除");render();}catch(Exception e){toast("未完成連動，請檢查時間及授權；記事保留");}});
+            try{nativeControls(box,NativeAlarmModel.note(note),false);}catch(Exception ignored){}
+            button(box,"連動 Junba 鬧鈴",()->{try{CalendarLinkSync.linkNote(this,note,true);toast("記事已連動；可在連動清單測試與移除");render();}catch(Exception e){toast("未完成連動，請檢查時間及授權；記事保留");}});
             button(box,"測試此記事響鈴",()->testNote(note));
             if(lamp>0)button(box,"移除記事的 Junba 連動",()->{AlarmStore.cancelNote(this,id,true);render();});
             button(box,"編輯記事",()->editor(note));
@@ -184,7 +186,7 @@ public class MainActivity extends Activity {
                 if(saved.created){
                     try{AlarmStore.cancelNote(this,saved.id,true);
                         if(stock)handoff(saved.note,true);
-                        else{CalendarLinkSync.linkNote(this,saved.note,true);toast("記事已保存並連動 Junba 系統鬧鈴");}
+                        else{CalendarLinkSync.linkNote(this,saved.note,true);toast("記事已保存並連動 Junba 鬧鈴");}
                     }catch(Exception error){toast("記事已保存，但連動變更未完成；請查授權與連動清單");}
                 }else toast("記事已儲存，沒有重複新增；請檢查連動清單");
             }catch(Exception e){dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true);toast("記事未完成儲存，草稿仍保留，請重試");}
@@ -202,22 +204,22 @@ public class MainActivity extends Activity {
             .putInt("simple_draft_edit_id",old==null?-1:old.optInt("id")).apply();
     }
     private void handoff(JSONObject note,boolean warnDuplicate){
-        String key="note:"+note.optInt("id");
-        if(warnDuplicate&&NativeLinkStore.has(this,key)){
-            new AlertDialog.Builder(this).setTitle("已送過這筆原廠請求")
-                .setMessage("再次送出可能多一個鬧鐘。你可以先到原廠核對，或確定要再建立。")
-                .setPositiveButton("仍要送出",(d,w)->handoff(note,false)).setNeutralButton("先開原廠",(d,w)->openClock()).setNegativeButton("取消",null).show();return;
-        }
-        final SimpleNote request;
-        try{request=SimpleNote.fromStored(note,System.currentTimeMillis(),ZoneId.systemDefault());}
-        catch(Exception e){toast("記事已保留；此時間已過，請先編輯日期與時間");return;}
-        Intent intent=new Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR,request.hour)
-            .putExtra(AlarmClock.EXTRA_MINUTES,request.minute).putExtra(AlarmClock.EXTRA_MESSAGE,request.label).putExtra(AlarmClock.EXTRA_SKIP_UI,false);
-        try{startActivity(intent);}
-        catch(Exception e){toast("記事已保存，但無法開啟原廠設定，請從原廠時鐘手動建立");return;}
-        try{NativeLinkStore.requested(this,key,"R7 手動核對",request.title,request.time,"不重複");}
-        catch(Exception ignored){toast("已送出原廠請求，連動紀錄未完成，請到原廠核對");return;}
-        toast("記事已保存，請核對原廠日期與時間；尚未確認是否已儲存");
+        try{
+            JSONObject source=NativeAlarmModel.note(note);
+            if(warnDuplicate&&NativeLinkStore.has(this,NativeAlarmModel.key(source))){
+                new AlertDialog.Builder(this).setTitle("曾送過原廠請求").setMessage("再次送出可能增加一個鬧鐘，舊原廠鬧鐘不會自動修改或刪除。")
+                    .setPositiveButton("仍要送交",(d,w)->handoff(note,false)).setNeutralButton("先開原廠核對",(d,w)->openClock()).setNegativeButton("取消",null).show();return;
+            }
+            sendNative(source,SimpleNote.fromStored(note,System.currentTimeMillis(),ZoneId.systemDefault()));
+        }catch(Exception e){toast("記事已保留；請確認未來日期時間後再送交原廠");}
+    }
+    private boolean sendNative(JSONObject source,SimpleNote request){
+        try{NativeLinkStore.validate(this);}catch(Exception e){toast("原廠送交紀錄無法讀取，未送出新請求；請先保留資料並在原廠核對");return false;}
+        try{startActivity(new Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR,request.hour).putExtra(AlarmClock.EXTRA_MINUTES,request.minute).putExtra(AlarmClock.EXTRA_MESSAGE,request.label).putExtra(AlarmClock.EXTRA_SKIP_UI,false));}
+        catch(Exception e){toast("無法開啟原廠設定，請從桌面開啟時鐘手動建立");return false;}
+        try{NativeLinkStore.requested(this,source,request);toast("已送交；請在原廠核對日期時間並儲存，回 App 標記本人已核對");}
+        catch(Exception e){toast("已送出原廠請求，但核對紀錄未寫入；請直接在原廠核對，避免重建");}
+        return true;
     }
     private void openClock(){
         try{startActivity(new Intent(AlarmClock.ACTION_SHOW_ALARMS));}
@@ -244,8 +246,9 @@ public class MainActivity extends Activity {
         }
     }
     private void alarmHistory(){
-        heading(content,"系統鬧鈴連動清單");
-        text(content,"🔴 已連動　🟠 正在響鈴　○ 未連動／已移除　🔵 測試。連動及測試只控制 Junba 系統鬧鈴，不更改 Google 原活動與通知。",15);
+        heading(content,"Junba 鬧鈴連動清單");
+        button(content,"原廠鬧鐘：逐筆送交／核對紀錄",this::showNative);
+        text(content,"🔴 已連動　🟠 正在響鈴　○ 未連動／已移除　🔵 測試。連動及測試只控制 Junba 鬧鈴，不更改 Google 原活動與通知。",15);
         button(content,"刷新日曆與連動",this::refreshCalendar);
         boolean showAll=getPreferences(0).getBoolean("all_alarm_history",false);
         button(content,showAll?"只看正式連動":"展開測試與其他紀錄",()->{getPreferences(0).edit().putBoolean("all_alarm_history",!showAll).apply();alarmPage=0;render();});
@@ -277,38 +280,101 @@ public class MainActivity extends Activity {
                     AlarmStore.upsertLink(this,r.optString("linkId"),r.optString("title"),source,r.optLong("when"),r,true);render();}
                 catch(Exception e){toast("未排成功，請檢查時間及授權");}
             });
-            if(r.has("stockRequestedAt")){text(box,"曾送出原廠請求，App 無法確認原廠是否已儲存。",14);button(box,"開原廠核對／取消鬧鐘",this::openClock);}
+            if(!test)nativeControls(box,r,true);
         }
     }
-    private void stockCalendar(JSONObject record){
-        if(record.has("stockRequestedAt")){
+    private void stockCalendar(JSONObject record){stockCalendar(record,true);}
+    private void stockCalendar(JSONObject record,boolean warnDuplicate){
+        if(warnDuplicate&&(NativeLinkStore.has(this,NativeAlarmModel.key(record))||record.has("stockRequestedAt"))){
             new AlertDialog.Builder(this).setTitle("曾送過原廠建立請求")
-                .setMessage("再次送出可能增加一個鬧鐘。可以先開原廠核對。")
+                .setMessage("再次送出可能增加一個鬧鐘。請先核對原廠清單；App 無法修改或移除那一筆。")
                 .setPositiveButton("仍要另建",(d,w)->stockCalendarEditor(record)).setNeutralButton("先開原廠",(d,w)->openClock()).setNegativeButton("取消",null).show();
         }else stockCalendarEditor(record);
     }
-    private void stockCalendarEditor(JSONObject record){
+    private void stockCalendarEditor(JSONObject record){stockCalendarEditor(record,false);}
+    private void stockCalendarEditor(JSONObject record,boolean existing){
         Calendar when=Calendar.getInstance();when.add(Calendar.MINUTE,10);when.set(Calendar.SECOND,0);when.set(Calendar.MILLISECOND,0);
-        if("snoozed".equals(record.optString("status"))&&record.optLong("when")>System.currentTimeMillis()+60000)when.setTimeInMillis(record.optLong("when"));
-        if(record.optLong("suggestedStockTime")>System.currentTimeMillis()+60000)when.setTimeInMillis(record.optLong("suggestedStockTime"));
+        if(record.optLong("when")>System.currentTimeMillis())when.setTimeInMillis(record.optLong("when"));
+        else if(record.optLong("suggestedStockTime")>System.currentTimeMillis())when.setTimeInMillis(record.optLong("suggestedStockTime"));
         LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),0,dp(18),dp(8));
-        text(box,"鬧鐘名稱",16);EditText name=new EditText(this);name.setSingleLine(true);name.setText(record.optString("eventTitle","Google 日曆提醒"));box.addView(name);
+        text(box,"鬧鐘名稱",16);EditText name=new EditText(this);name.setSingleLine(true);name.setText(NativeAlarmModel.name(record));box.addView(name);
         text(box,record.optString("title"),16);
         Button date=button(box,"",()->new DatePickerDialog(this,(v,y,m,d)->{when.set(y,m,d);updatePickerLabels(box,when);},when.get(Calendar.YEAR),when.get(Calendar.MONTH),when.get(Calendar.DAY_OF_MONTH)).show());date.setTag("date");
         Button time=button(box,"",()->new TimePickerDialog(this,(v,h,m)->{when.set(Calendar.HOUR_OF_DAY,h);when.set(Calendar.MINUTE,m);updatePickerLabels(box,when);},when.get(Calendar.HOUR_OF_DAY),when.get(Calendar.MINUTE),true).show());time.setTag("time");updatePickerLabels(box,when);
-        text(box,"請選擇要新增的鬧鐘日期時間；收到通知的時間不能當作活動開始時間。原廠只接收名稱與時分，完整日期仍由你核對。",14);
-        text(box,"Junba 已排定的延後提醒仍保留；若只要原廠響鈴，請另外取消 Junba 提醒。",14);
+        text(box,existing?"先開原廠查看，再填你已核對的名稱與完整日期時間。這裡預填的是 Junba／來源時間，不是原廠讀回。此操作只登記，不新建、不修改原廠。":"送交名稱與時分，名稱附完整日期文字。Android 無法代填原廠日期；請在原廠調整日期並儲存，再回 App 標記核對。",15);
+        if(existing)button(box,"先開原廠清單核對",this::openClock);
+        if(record.optLong("when")<=System.currentTimeMillis())text(box,"原提醒已過期；目前先建議 10 分鐘後，請選定你要的新日期時間。",14);
+        text(box,"原有 Junba 連動保持原時間；若兩邊都啟用，可能各響一次。這不是自動同步原廠鬧鐘。",14);
         ScrollView scroll=new ScrollView(this);scroll.addView(box);
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("建立原廠鬧鐘並核對").setView(scroll).setPositiveButton("送交原廠",null).setNegativeButton("取消",null).create();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(existing?"本人登記既有原廠鬧鐘":"送交原廠建立這一筆").setView(scroll).setPositiveButton(existing?"已核對，登記內容":"送交原廠",null).setNegativeButton("取消",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
             try{
                 SimpleNote request=SimpleNote.create(name.getText().toString(),record.optString("title"),when.get(Calendar.YEAR),when.get(Calendar.MONTH)+1,when.get(Calendar.DAY_OF_MONTH),when.get(Calendar.HOUR_OF_DAY),when.get(Calendar.MINUTE),System.currentTimeMillis(),ZoneId.systemDefault());
-                startActivity(new Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR,request.hour).putExtra(AlarmClock.EXTRA_MINUTES,request.minute).putExtra(AlarmClock.EXTRA_MESSAGE,request.label).putExtra(AlarmClock.EXTRA_SKIP_UI,false));
-                dialog.dismiss();
-                try{AlarmStore.requestedStock(this,record.optString("key"),request.time);toast("已送出請求，請在原廠核對日期時間並完成儲存");}
-                catch(Exception error){toast("已送出原廠請求，但紀錄未寫入；請直接在原廠核對");}
-            }catch(Exception error){toast("未送出原廠請求，請選未來日期時間或手動開啟時鐘");}
+                if(existing){JSONObject latest=nativeSource(NativeAlarmModel.key(record));if(latest==null||!NativeAlarmModel.basis(latest).equals(NativeAlarmModel.basis(record)))throw new IllegalStateException();NativeLinkStore.registered(this,record,request);dialog.dismiss();render();toast("已登記本人核對內容；沒有另建原廠鬧鐘");}
+                else if(sendNative(record,request))dialog.dismiss();
+            }catch(Exception error){toast(existing?"登記未完成，請選未來時間並刷新來源重試":"未送出原廠請求，請選未來日期時間或手動開啟時鐘");}
         }));dialog.show();
+    }
+    private void showNative(){page="native";render();}
+    private void nativeControls(LinearLayout box,JSONObject source,boolean create){
+        String key=NativeAlarmModel.key(source);JSONObject request=NativeLinkStore.find(this,key);
+        text(box,"原廠時鐘｜"+NativeAlarmModel.status(request,source),15);
+        if(create)button(box,"送交原廠建立這筆鬧鐘…",()->stockCalendar(source));
+        if(!NativeAlarmModel.confirmed(request,source))button(box,"登記已在原廠建立的鬧鐘（不另建）…",()->stockCalendarEditor(source,true));
+        if(request==null){if(source.has("stockRequestedAt"))text(box,"另有舊版原廠請求，請先查看原廠清單以免重複。",14);return;}
+        text(box,("manual-registration".equals(request.optString("origin"))?"本人登記名稱：":"送交名稱：")+request.optString("title")+"\n日期時間："+dateFormat.format(new Date(request.optLong("when"))),15);
+        if(request.optJSONArray("priorRequests")!=null){
+            JSONArray prior=request.optJSONArray("priorRequests");text(box,"先前另有紀錄 "+prior.length()+" 次；舊鬧鐘不會自動移除。",14);
+            button(box,"查看先前送交／登記內容",()->{StringBuilder message=new StringBuilder();for(int i=0;i<prior.length();i++){JSONObject old=prior.optJSONObject(i);if(old!=null)message.append(old.optString("title")).append(" · ").append(dateFormat.format(new Date(old.optLong("when")))).append("\n");}new AlertDialog.Builder(this).setTitle("先前送交／登記，非原廠讀回").setMessage(message).setPositiveButton("開原廠核對",(d,w)->openClock()).setNegativeButton("返回",null).show();});
+        }
+        button(box,"開原廠清單核對／關閉／刪除",this::openClock);
+        if(NativeAlarmModel.current(request,source)&&!NativeAlarmModel.confirmed(request,source)&&!"manual-removed".equals(request.optString("status")))
+            button(box,"本人已在原廠核對並儲存這筆",()->confirmNative(source,request));
+        if(NativeAlarmModel.confirmed(request,source))button(box,"改回待核對",()->markNative(key,source,request,"pending"));
+        if(!"manual-removed".equals(request.optString("status")))button(box,"本人已在原廠關閉／刪除…",()->new AlertDialog.Builder(this).setTitle("已在原廠處理完成？")
+            .setMessage("此按鈕只記錄你的操作，不會代替原廠刪除，也不取消 Junba 連動。請先到原廠關閉或刪除鬧鐘。")
+            .setPositiveButton("已處理，記錄標記",(d,w)->markNative(key,source,request,"manual-removed")).setNeutralButton("先開原廠",(d,w)->openClock()).setNegativeButton("取消",null).show());
+    }
+    private void confirmNative(JSONObject source,JSONObject request){
+        new AlertDialog.Builder(this).setTitle("確認你已在原廠儲存")
+            .setMessage(request.optString("title")+"\n"+dateFormat.format(new Date(request.optLong("when")))+"\n請確認原廠完整日期、時間、名稱及開關均正確。App 無法讀回原廠資料；此處是本人核對紀錄。")
+            .setPositiveButton("已核對並儲存",(d,w)->markNative(NativeAlarmModel.key(source),source,request,"manual-confirmed")).setNegativeButton("尚未完成",null).show();
+    }
+    private void markNative(String key,JSONObject source,JSONObject shown,String status){
+        try{JSONObject latest=nativeSource(key);NativeLinkStore.mark(this,key,latest,shown,status);render();}catch(Exception e){toast("核對標記未儲存，來源可能已變更，請刷新後重試");}
+    }
+    private void nativeReview(){
+        heading(content,"原廠鬧鐘送交與本人核對");
+        text(content,"這裡是送交及本人核對紀錄。紅燈只表示 Junba 已排程，不代表原廠已建鬧鐘。原廠每筆須核對日期並儲存；App 無法自動讀回或刪除。",16);
+        button(content,"開啟原廠鬧鐘清單",this::openClock);button(content,"刷新 Google 日曆與 Junba 連動",this::refreshCalendar);
+        List<JSONObject> candidates=NativeAlarmModel.candidates(AlarmStore.all(this),System.currentTimeMillis());
+        int confirmed=0,pending=0,removed=0;JSONObject next=null;
+        for(JSONObject r:candidates){JSONObject request=NativeLinkStore.find(this,NativeAlarmModel.key(r));
+            if(NativeAlarmModel.confirmed(request,r))confirmed++;else if(request!=null&&"manual-removed".equals(request.optString("status")))removed++;else{pending++;if(next==null)next=r;}}
+        text(content,"未來 Junba 連動 "+candidates.size()+" 筆｜本人已核對原廠 "+confirmed+" 筆｜本人已關閉 "+removed+" 筆｜待送交／核對 "+pending+" 筆",16);
+        if(next!=null){JSONObject target=next;button(content,"逐筆處理：下一筆待送交／核對…",()->{
+            JSONObject request=NativeLinkStore.find(this,NativeAlarmModel.key(target));
+            AlertDialog.Builder review=new AlertDialog.Builder(this).setTitle(NativeAlarmModel.name(target)).setMessage(dateFormat.format(new Date(target.optLong("when")))+"\n"+NativeAlarmModel.status(request,target));
+            if(NativeAlarmModel.current(request,target)&&!"manual-removed".equals(request.optString("status")))review.setPositiveButton("本人已核對…",(d,w)->confirmNative(target,request)).setNegativeButton("重新送交…",(d,w)->stockCalendar(target));
+            else review.setPositiveButton("送交原廠",(d,w)->stockCalendar(target)).setNegativeButton("返回清單",null);
+            review.setNeutralButton("開原廠核對",(d,w)->openClock()).show();});}
+        boolean history=getPreferences(0).getBoolean("native_history",false);button(content,history?"只看未來連動／送交":"展開全部歷史送交紀錄",()->{getPreferences(0).edit().putBoolean("native_history",!history).apply();nativePage=0;render();});
+        List<JSONObject> rows=new ArrayList<>(candidates);Set<String> seen=new HashSet<>();for(JSONObject r:rows)seen.add(NativeAlarmModel.key(r));
+        {JSONArray requests=NativeLinkStore.all(this);for(int i=requests.length()-1;i>=0;i--){JSONObject request=requests.optJSONObject(i);if(request==null||(!history&&request.optLong("when")<=System.currentTimeMillis())||!seen.add(request.optString("key")))continue;
+            JSONObject source=nativeSource(request.optString("key"));if(source!=null)rows.add(source);else try{rows.add(new JSONObject().put("key","archive:"+i).put("archiveKey",request.optString("key")).put("title",request.optString("title")));}catch(JSONException ignored){}}}
+        if(rows.isEmpty())text(content,"尚無可送交項目。先從記事或月份活動建立 Junba 連動，也可直接從活動送交原廠。",16);
+        if(nativePage*20>=rows.size())nativePage=0;int from=nativePage*20,to=Math.min(rows.size(),from+20);
+        text(content,"目前清單 "+rows.size()+" 筆，第 "+(nativePage+1)+" 頁",14);
+        if(nativePage>0)button(content,"前 20 筆",()->{nativePage--;render();});if(to<rows.size())button(content,"後 20 筆",()->{nativePage++;render();});
+        for(JSONObject source:rows.subList(from,to)){LinearLayout box=card();heading(box,NativeAlarmModel.name(source));
+            if(source.has("archiveKey")){JSONObject old=NativeLinkStore.find(this,source.optString("archiveKey"));text(box,"來源不在目前 Junba 清單；此為歷史送交紀錄，請直接在原廠核對。",15);if(old!=null)text(box,dateFormat.format(new Date(old.optLong("when")))+" · "+("manual-confirmed".equals(old.optString("status"))?"曾本人核對此版本":"本機送交／關閉紀錄"),15);button(box,"開啟原廠清單",this::openClock);}
+            else{text(box,source.optString("title")+"\nJunba／來源時間："+dateFormat.format(new Date(source.optLong("when"))),16);nativeControls(box,source,true);}}
+        text(content,"選取帳號的新提醒會自動納入 Junba，原廠清單仍須逐筆送交與核對。來源、名稱或連動時間變更時，舊核對不代表新設定；已建的原廠項目須另行調整。",14);
+    }
+    private JSONObject nativeSource(String key){
+        JSONArray records=AlarmStore.all(this);for(int i=records.length()-1;i>=0;i--){JSONObject r=records.optJSONObject(i);if(r!=null&&key.equals(NativeAlarmModel.key(r))&&(!r.has("noteId")||(r.optBoolean("linkEnabled")&&AlarmRecord.pending(r)&&r.optLong("when")>System.currentTimeMillis())))return r;}
+        JSONArray notes=ReminderStore.all(this);for(int i=0;i<notes.length();i++){JSONObject note=notes.optJSONObject(i);try{if(note!=null&&key.equals("note:"+note.optInt("id")))return NativeAlarmModel.note(note);}catch(JSONException ignored){}}
+        return null;
     }
     private void testCalendarEvent(CalendarModel.Event event){
         new AlertDialog.Builder(this).setTitle("測試這筆活動的 Junba 連動？")
@@ -322,12 +388,20 @@ public class MainActivity extends Activity {
             }).setNegativeButton("取消",null).show();
     }
     private void stockCalendarEvent(CalendarModel.Event event){
+        List<LinkModel.Request> options=LinkModel.plan(Collections.singletonList(event),System.currentTimeMillis(),Long.MAX_VALUE);
+        if(options.size()>1){String[] names=new String[options.size()+1];for(int i=0;i<options.size();i++)names[i]=dateFormat.format(new Date(options.get(i).when));names[names.length-1]="自行指定時間…";
+            new AlertDialog.Builder(this).setTitle("選擇要送交原廠的提醒").setItems(names,(d,w)->stockCalendarEventTime(event,w<options.size()?options.get(w).when:CalendarModel.stockTime(event,System.currentTimeMillis(),ZoneId.systemDefault()))).setNegativeButton("取消",null).show();
+        }else stockCalendarEventTime(event,options.isEmpty()?CalendarModel.stockTime(event,System.currentTimeMillis(),ZoneId.systemDefault()):options.get(0).when);
+    }
+    private void stockCalendarEventTime(CalendarModel.Event event,long when){
         try{
-            JSONArray records=AlarmStore.all(this);
-            for(int n=records.length()-1;n>=0;n--){JSONObject r=records.optJSONObject(n);
-                if(r!=null&&CalendarModel.belongs(r,event)&&r.has("stockRequestedAt")){stockCalendar(r);return;}}
-            JSONObject metadata=event.metadata("reference").put("suggestedStockTime",CalendarModel.stockTime(event,System.currentTimeMillis(),ZoneId.systemDefault()));
-            JSONObject record=AlarmStore.create(this,event.title+"\n"+event.calendar.label(),"calendar_setup",event.key(),System.currentTimeMillis(),metadata);
+            String id=new LinkModel.Request(event,when).id;JSONObject linked=AlarmStore.findLink(this,id);
+            if(linked!=null){stockCalendar(linked);return;}
+            // A reference row never schedules a Junba alarm or changes Google data.
+            JSONArray all=AlarmStore.all(this);for(int i=all.length()-1;i>=0;i--){JSONObject r=all.optJSONObject(i);
+                if(r!=null&&"calendar_setup".equals(r.optString("source"))&&CalendarModel.belongs(r,event)&&r.optLong("when")==when){stockCalendar(r);return;}}
+            JSONObject metadata=event.metadata("reference").put("suggestedStockTime",when);
+            JSONObject record=AlarmStore.create(this,event.title+"\n"+event.calendar.label(),"calendar_setup",event.key(),when,metadata);
             stockCalendar(record);
         }catch(Exception e){toast("活動資料未保存，請重試；尚未送交原廠");}
     }
@@ -336,7 +410,7 @@ public class MainActivity extends Activity {
         java.util.List<LinkModel.Request> options=LinkModel.plan(Collections.singletonList(event),System.currentTimeMillis(),Long.MAX_VALUE);
         String[] labels=new String[options.size()+2];labels[0]="連動全部可讀的未來提醒（"+options.size()+" 筆）";
         for(int i=0;i<options.size();i++)labels[i+1]=dateFormat.format(new Date(options.get(i).when));labels[labels.length-1]="自行指定 Junba 時間（不改 Google）";
-        new AlertDialog.Builder(this).setTitle("連動此活動的系統鬧鈴").setItems(labels,(d,w)->{
+        new AlertDialog.Builder(this).setTitle("連動此活動的 Junba 鬧鈴").setItems(labels,(d,w)->{
             if(w==labels.length-1){manualCalendarTime(event);return;}
             int success=0;
             try{
@@ -419,11 +493,11 @@ public class MainActivity extends Activity {
         LinearLayout tools=section("tools","測試與原廠時鐘",false);
         if(tools!=null){
             button(tools,"測試 Junba 響鈴 5 秒",()->{try{testRecord(new JSONObject().put("title","Junba 音效測試"));}catch(Exception ignored){}});
-            button(tools,"查看全部連動與測試",()->{page="alarms";render();});button(tools,"開原廠時鐘核對",this::openClock);
+            button(tools,"查看全部連動與測試",()->{page="alarms";render();});button(tools,"原廠送交與本人核對紀錄",this::showNative);button(tools,"開原廠時鐘核對",this::openClock);
             text(tools,"紅燈代表 Junba 系統排程；原廠已建鬧鐘仍需在原廠查看、取消，App 無法讀回或確認。",14);
         }
-        LinearLayout data=section("data","資料與版本｜R10",false);
-        if(data!=null){text(data,"0.5.0-R10-links\n作者：峻爸\n不含 AI、API Key 或網路權限。移除連動只取消 Junba 鬧鈴，Google 原活動與通知保留。",15);
+        LinearLayout data=section("data","資料與版本｜R11",false);
+        if(data!=null){text(data,"0.6.0-R11-clock\n作者：峻爸\n不含 AI、API Key 或網路權限。移除連動只取消 Junba 鬧鈴，Google 原活動與通知保留。",15);
             button(data,"匯出記事與連動備份",this::exportBackup);text(data,"備份不含 Google 原活動或原廠時鐘資料，尚無自動完整還原，不可據此直接解除安裝。",14);}
     }
     private boolean notificationsGranted(){return AlarmStore.notificationsVisible(this);}
@@ -437,12 +511,12 @@ public class MainActivity extends Activity {
     private void exactSettings(){if(Build.VERSION.SDK_INT<31)return;try{startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}catch(Exception e){toast("請到系統設定允許 Junba 精確鬧鐘");}}
     private void exportBackup(){
         Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");
-        intent.putExtra(Intent.EXTRA_TITLE,"Junba_R10_Backup.json");try{startActivityForResult(intent,EXPORT);}catch(Exception e){toast("無法開啟備份儲存視窗");}
+        intent.putExtra(Intent.EXTRA_TITLE,"Junba_R11_Backup.json");try{startActivityForResult(intent,EXPORT);}catch(Exception e){toast("無法開啟備份儲存視窗");}
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);if(request!=EXPORT||result!=RESULT_OK||data==null||data.getData()==null)return;
         try{
-            JSONObject backup=new JSONObject().put("version",7).put("notes",new JSONArray(getSharedPreferences("junba",0).getString("notes","[]")))
+            JSONObject backup=new JSONObject().put("version",8).put("notes",new JSONArray(getSharedPreferences("junba",0).getString("notes","[]")))
                 .put("native_links",new JSONArray(getSharedPreferences("junba",0).getString("native_links","[]")))
                 .put("alarm_records",new JSONArray(getSharedPreferences(AlarmStore.PREF,0).getString("records","[]")))
                 .put("calendar_view",new JSONObject(getSharedPreferences("junba_calendar_view",0).getAll()))

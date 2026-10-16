@@ -37,9 +37,9 @@ final class CalendarLinkSync {
             JSONObject record=old.optJSONObject(i);if(record==null||!LinkModel.managed(record))continue;
             AlarmStore.retireIfStale(c,record.optString("key"),selected,desired,liveEvents,now,until,snapshot.alertsComplete);
         }
-        int accepted=0,off=0,failed=0;
+        int accepted=0,off=0,failed=0,limited=0;JSONObject outcomes=new JSONObject();
         for(LinkModel.Request request:requests){
-            if(!disabled.contains(request.id)&&!allowed.contains(request.id))continue;
+            if(!disabled.contains(request.id)&&!allowed.contains(request.id)){limited++;outcomes.put(request.id,"limit");continue;}
             if(!CalendarNotificationListener.enabled(c)||!LinkPolicy.prelink(c))break;
             try{
                 JSONObject record=AlarmStore.upsertLink(c,request.id,request.event.title+"\n"+request.event.calendar.label(),"calendar_link",request.when,request.metadata(),false);
@@ -48,7 +48,13 @@ final class CalendarLinkSync {
                 else failed++;
             }catch(Exception e){failed++;}
         }
-        result(c,"已刷新未來 90 天：連動 "+accepted+" 筆、本人移除 "+off+" 筆、未排成功 "+failed+" 筆"+(requests.size()>250?"；本次上限 250 筆，其餘未亮燈":"")+"。Google 原資料不變。");
+        c.getSharedPreferences(LinkPolicy.PREF,0).edit().putString("sync_outcomes",outcomes.toString()).apply();
+        // Invalidates only our audit flag; never sends a background Clock intent or touches an OEM alarm.
+        String nativeWarning="";
+        try{NativeLinkStore.reconcile(c,snapshot.events,selected,desired,now,today.minusDays(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli(),until,snapshot.alertsComplete);}
+        catch(Exception error){nativeWarning="原廠核對紀錄未能更新，請自行到原廠核對。";}
+        int unknown=0;for(CalendarModel.Event event:snapshot.events)if(event.end>now&&((event.minutes.isEmpty()&&event.alertTimes.isEmpty())||(event.allDay&&event.alertTimes.isEmpty())||(event.minutes.contains(-1)&&event.alertTimes.isEmpty()&&event.minutes.stream().noneMatch(m->m>=0))))unknown++;
+        result(c,"已刷新未來 90 天：Junba 連動 "+accepted+" 筆、本人移除 "+off+" 筆、未排成功 "+failed+" 筆"+(limited>0?"；超過上限未預排 "+limited+" 筆":"")+"；未提供確切提醒時間的活動 "+unknown+" 筆。原廠鬧鐘需另外逐筆送交核對。Google 原資料不變。"+nativeWarning);
     }
     private static void cancelManaged(Context c){
         JSONArray records=AlarmStore.all(c);for(int i=0;i<records.length();i++){JSONObject r=records.optJSONObject(i);
