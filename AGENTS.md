@@ -1,0 +1,28 @@
+# Codex Project Rules — Junba 智慧提醒
+
+## 產品不變原則
+- 所有使用者可見的介面、錯誤說明、文件優先使用**繁體中文**。
+- App 必須保持 Android applicationId/package `tw.junba.reminder`。不要無意增加 applicationIdSuffix、改套件名、刪除現有使用者資料。
+- 目前目標裝置 vivo V2413 / Android 16；不要推測 OEM 私有 API 可用。
+- 作者顯示需求：`作者：峻爸`，修改 UI 時請保留/加入。
+- Gemini 用來處理**語音口述的記事和提醒建立**，不是只做 API Key 測試；API 失敗不得清除使用者已輸入的語音轉文字及草稿。
+- 空白標題或內容不得阻止記事建立；各自以「無訊息」儲存。提醒設定失敗不得讓整份記事遺失。
+- Google 日曆提醒需以「實際事件提醒時間」為準，涵蓋舊有及新加活動；忠實反映來源與排程，不可宣稱與 vivo 原廠鬧鐘完全同步。
+- 無法實現的原廠時鐘自動寫入須清楚揭露，絕不可繞過 Android 權限。
+
+## 安全／資料延續：阻斷條件（P0）
+- **永遠先備份再移除**：若舊版 App 可取得的記事/提醒/連動紀錄尚未完整且可驗證備份，禁止自動解除安裝。
+- 匯入必須先預覽與驗證 JSON schema，採**合併／去重**、衝突需詢問使用者，不可默默覆蓋現有記事或日曆選取設定。
+- 寫入備份需 atomic safe-write 或完成驗證後才報成功；匯入後重新排程需檢查權限並呈現失敗筆數。
+- Google 日曆事件的原始資料在系統 CalendarProvider／雲端，不要複製使用者私人事件到 GitHub。
+- 重新安裝前必須辨識 APK 的 package、versionCode、簽章相容性。舊 APK 的簽章與新 APK 不相容時，應先提示備份，不能說『清除舊版認證』可繞過 Android 保護。
+- 設置**固定且保密**的 release signing，透過 GitHub Secrets／CI 注入；keystore/密碼不得提交進 repo、日誌、產物 ZIP。設置前 debug APK 不保證覆蓋升級。
+- 不得索取/記錄使用者的 Gemini API Key 到 repo、GitHub Issues、測試 fixture 或 log。
+
+## 開發與測試
+- 先盤點實際原始碼、CI、現存 JSON 格式；給出『已實作／未實作／需驗證』清單。
+- 小批次修改，每批跑 `assembleDebug` 並修復編譯錯誤；若無 Android SDK 就明說沒有完成編譯。
+- 優先新增測試：空白記事、草稿保存、API 失敗回復、舊版 JSON 匯入、合併不覆蓋、多提醒、日曆同步、開機重排程、權限拒絕、跨版本安裝。
+- 對每次資料格式變更，保留版本遷移路徑與 rollback/recovery 設計。
+- 禁止自動上傳私人使用者資料到任意服務；Gemini 只有在使用者確認傳送口述文字後才呼叫。
+- 明確區分 Junba App 自有鬧鐘、Android AlarmManager 與 vivo 原廠時鐘；不得在 UI／文件混稱。
