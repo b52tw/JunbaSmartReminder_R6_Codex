@@ -1,4 +1,4 @@
-name: Build Android APK
+name: Build Android APK (debug development only)
 
 on:
   workflow_dispatch:
@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
+
+      - name: Explain debug signing limitation
+        run: echo '::warning::此流程使用開發用 debug 簽章，不保證能覆蓋手機舊版；固定簽章 APK 請使用 Build Signed Android APK，詳見 docs/APK_SIGNING.md。'
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -68,7 +71,7 @@ jobs:
 
       - name: Build debug APK
         shell: bash
-        run: gradle --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug testDebugUnitTest lintDebug
 
       - name: Verify output APK
         shell: bash

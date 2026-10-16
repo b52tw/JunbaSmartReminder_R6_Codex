@@ -1,0 +1,88 @@
+name: Build Signed Android APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check required signing settings
+        env:
+          JUNBA_KEYSTORE_BASE64: ${{ secrets.JUNBA_KEYSTORE_BASE64 }}
+          JUNBA_STORE_PASSWORD: ${{ secrets.JUNBA_STORE_PASSWORD }}
+          JUNBA_KEY_ALIAS: ${{ secrets.JUNBA_KEY_ALIAS }}
+          JUNBA_KEY_PASSWORD: ${{ secrets.JUNBA_KEY_PASSWORD }}
+          JUNBA_EXPECTED_CERT_SHA256: ${{ vars.JUNBA_EXPECTED_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in JUNBA_KEYSTORE_BASE64 JUNBA_STORE_PASSWORD JUNBA_KEY_ALIAS JUNBA_KEY_PASSWORD JUNBA_EXPECTED_CERT_SHA256; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::缺少 $name；請依 docs/APK_SIGNING.md 在儲存庫設定，不要將金鑰或密碼貼到聊天或日誌。"
+              exit 1
+            fi
+          done
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -maxdepth 4 -type f -name sdkmanager | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          set +o pipefail
+          yes 2>/dev/null | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses > "$RUNNER_TEMP/android-licenses.log" 2>&1
+          license_status=${PIPESTATUS[1]}
+          set -o pipefail
+          test "$license_status" = 0
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+          test -s "$SDK_ROOT/platforms/android-35/android.jar"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Test and build
+        run: |
+          bash tools/test_native_alarm.sh
+          gradle --no-daemon --max-workers=2 --stacktrace assembleDebug assembleRelease testDebugUnitTest lintDebug
+          python3 tests/test_release_signing.py app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/debug/app-debug.apk -v
+
+      - name: Sign and verify release APK
+        env:
+          JUNBA_KEYSTORE_BASE64: ${{ secrets.JUNBA_KEYSTORE_BASE64 }}
+          JUNBA_STORE_PASSWORD: ${{ secrets.JUNBA_STORE_PASSWORD }}
+          JUNBA_KEY_ALIAS: ${{ secrets.JUNBA_KEY_ALIAS }}
+          JUNBA_KEY_PASSWORD: ${{ secrets.JUNBA_KEY_PASSWORD }}
+          JUNBA_EXPECTED_CERT_SHA256: ${{ vars.JUNBA_EXPECTED_CERT_SHA256 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tools/sign_release_apk.sh app/build/outputs/apk/release/app-release-unsigned.apk "$RUNNER_TEMP/junba-release/app-release.apk"
+          printf 'Certificate SHA-256: %s\n' "$JUNBA_EXPECTED_CERT_SHA256" > "$RUNNER_TEMP/junba-release/signing-certificate.txt"
+          cd "$RUNNER_TEMP/junba-release"
+          sha256sum app-release.apk > SHA256SUMS.txt
+
+      - name: Upload verified APK only
+        uses: actions/upload-artifact@v4
+        with:
+          name: JunbaSmartReminder-R6-signed-release-APK
+          path: |
+            ${{ runner.temp }}/junba-release/app-release.apk
+            ${{ runner.temp }}/junba-release/SHA256SUMS.txt
+            ${{ runner.temp }}/junba-release/signing-certificate.txt
+          if-no-files-found: error
+          retention-days: 30

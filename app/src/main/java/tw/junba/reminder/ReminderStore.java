@@ -37,6 +37,15 @@ public final class ReminderStore {
         JSONArray a=all(c);a.put(o);save(c,a);
         if(remind)schedule(c,o);return id;
     }
+    static AiNoteCreation createAi(Context c,String token,AiReminderDraft draft,boolean remind) throws JSONException {
+        android.content.SharedPreferences prefs=c.getSharedPreferences("junba",0);
+        // Reject malformed stored JSON instead of silently replacing existing data.
+        JSONArray existing=new JSONArray(prefs.getString("notes","[]"));
+        AiNoteCreation result=AiNoteCreation.prepare(existing,prefs.getInt("next_note_id",10000),token,draft,remind);
+        if(result.created&&!prefs.edit().putString("notes",result.notes.toString()).putInt("next_note_id",result.nextId).commit())
+            throw new IllegalStateException("記事尚未寫入儲存空間，草稿已保留。");
+        return result;
+    }
     private static String safe(String s){return s==null||s.trim().isEmpty()?"無訊息":s.trim();}
     static void updateFull(Context c,int id,String title,String body,long timestamp,int advanceMin,String repeat,boolean remind) throws JSONException {
         JSONArray a=all(c);

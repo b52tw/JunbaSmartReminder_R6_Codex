@@ -41,6 +41,10 @@ public class MainActivity extends Activity {
     private final Calendar chosenDay=Calendar.getInstance();
     private String page="總覽";
     private boolean keyExpanded=false;
+    private boolean voiceAiConsent=false;
+    private int voiceRequestId=0;
+    private int queryRequestId=0;
+    private AlertDialog aiProgress,queryProgress;
     private int calendarCount=0;
     private int scheduleCount=0;
     private int calendarMirrorCount=0;
@@ -48,7 +52,16 @@ public class MainActivity extends Activity {
     private static final int EXPORT_REQUEST=401,IMPORT_REQUEST=402,VOICE_REQUEST=403;
 
     @Override public void onCreate(Bundle b){
-        super.onCreate(b);AlarmReceiver.ensureChannel(this);makeLayout();askPermissions();sync();
+        super.onCreate(b);voiceAiConsent=b!=null&&b.getBoolean("voice_ai_consent");
+        AlarmReceiver.ensureChannel(this);makeLayout();askPermissions();sync();
+    }
+    @Override protected void onSaveInstanceState(Bundle out){
+        out.putBoolean("voice_ai_consent",voiceAiConsent);super.onSaveInstanceState(out);
+    }
+    @Override protected void onDestroy(){
+        voiceRequestId++;queryRequestId++;
+        if(aiProgress!=null)aiProgress.dismiss();if(queryProgress!=null)queryProgress.dismiss();
+        super.onDestroy();
     }
     @Override public void onResume(){super.onResume();if(status!=null){sync();render();}}
     @Override public void onRequestPermissionsResult(int request,String[] p,int[] r){
@@ -76,15 +89,16 @@ public class MainActivity extends Activity {
     private void card(LinearLayout l){View v=new View(this);v.setBackgroundColor(0xffe7eaef);
         LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(1));p.setMargins(0,dp(9),0,dp(9));l.addView(v,p);}
     private void makeLayout(){
-        scroll=new ScrollView(this);root=new LinearLayout(this);root.setOrientation(1);
+        scroll=new ScrollView(this);root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);
         root.setPadding(dp(12),dp(14),dp(12),dp(22));scroll.addView(root);setContentView(scroll);
         TextView title=label("Junba 智慧提醒 R6",24);title.setTypeface(null,Typeface.BOLD);root.addView(title);
+        root.addView(label("作者：峻爸",14));
         status=label("準備同步…",14);root.addView(status);
         rowButtons(root,new String[]{"同步","總覽","記事","日曆"},new Runnable[]{this::syncAndRender,
             ()->go("總覽"),()->go("記事"),()->go("日曆")});
         rowButtons(root,new String[]{"連動紀錄","AI 查詢","設定"},new Runnable[]{
             ()->go("連動紀錄"),()->go("AI 查詢"),()->go("設定")});
-        content=new LinearLayout(this);content.setOrientation(1);root.addView(content);
+        content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);root.addView(content);
         render();
     }
     private void askPermissions(){
@@ -130,7 +144,7 @@ public class MainActivity extends Activity {
     }
     private void homePage(){
         heading(content,"今天與下一次提醒");
-        button(content,"語音建立記事／鬧鐘（Gemini 辨識）",this::startVoiceNote);
+        aiEntry(content);
         button(content,"查看今天日曆／本月月曆",()->{chosenDay.setTimeInMillis(System.currentTimeMillis());
             displayed.setTimeInMillis(System.currentTimeMillis());go("日曆");});
         line(content,"整合來源：App 記事 "+ReminderStore.all(this).length()+" 筆、手機日曆 "+calendarCount+
@@ -141,7 +155,7 @@ public class MainActivity extends Activity {
         button(content,"開啟 vivo 原廠時鐘核對",this::openNativeClock);
         button(content,"建立／測試 vivo 原廠鬧鐘（2 分鐘後）",()->{
             long t=System.currentTimeMillis()+120000L;
-            nativeAlarm("test:"+t,"App 測試","Junba R5 原廠響鈴測試",t,"不重複");
+            nativeAlarm("test:"+t,"App 測試","Junba R6 原廠響鈴測試",t,"不重複");
         });
         button(content,"手動建立原廠鬧鐘",this::manualNativeAlarm);
         card(content);
@@ -164,57 +178,66 @@ public class MainActivity extends Activity {
         catch(Exception e){toast("無法開啟時鐘，請手動開啟 vivo 原廠時鐘");}
     }
     private void manualNativeAlarm(){
-        final EditText name=new EditText(this);name.setHint("鬧鐘名稱／提醒內容");
-        new AlertDialog.Builder(this).setTitle("新增 vivo 原廠鬧鐘")
-            .setView(name).setPositiveButton("選擇時間",(d,w)->{
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(18),0,dp(18),0);
+        final EditText name=new EditText(this);name.setHint("鬧鐘名稱／提醒內容");box.addView(name);
+        String[] repeats={"不重複","每日","每週"};
+        Spinner repeat=new Spinner(this);
+        repeat.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,repeats));box.addView(repeat);
+        line(box,"每週會沿用下一次所選時間的星期；送出前會顯示日期與規則，請到原廠時鐘核對。鈴聲、音量及貪睡仍由原廠時鐘設定。");
+        new AlertDialog.Builder(this).setTitle("新增原廠鬧鐘")
+            .setView(box).setPositiveButton("選擇時間",(d,w)->{
                 Calendar c=Calendar.getInstance();new TimePickerDialog(this,(picker,h,m)->{
                     Calendar t=Calendar.getInstance();t.set(Calendar.HOUR_OF_DAY,h);t.set(Calendar.MINUTE,m);
-                    t.set(Calendar.SECOND,0);if(t.getTimeInMillis()<=System.currentTimeMillis())t.add(Calendar.DAY_OF_MONTH,1);
-                    nativeAlarm("manual:"+System.currentTimeMillis(),"手動建立",name.getText().toString().trim(),t.getTimeInMillis(),"不重複");
+                    t.set(Calendar.SECOND,0);t.set(Calendar.MILLISECOND,0);
+                    if(t.getTimeInMillis()<=System.currentTimeMillis())t.add(Calendar.DAY_OF_MONTH,1);
+                    nativeAlarm("manual:"+System.currentTimeMillis(),"手動建立",name.getText().toString().trim(),
+                        t.getTimeInMillis(),repeats[repeat.getSelectedItemPosition()]);
                 },c.get(Calendar.HOUR_OF_DAY),c.get(Calendar.MINUTE),true).show();
             }).setNegativeButton("取消",null).show();
     }
     private void nativeAlarm(String key,String source,String title,long timestamp,String repeat){
-        // Stock Android Clock creation supports time-of-day only. A distant one-off
-        // reminder would mistakenly ring on the next matching day: do not send it.
-        if(timestamp<=System.currentTimeMillis()){
-            new AlertDialog.Builder(this).setTitle("提醒時間已過")
-                .setMessage("這筆日曆提前提醒時間已經過去，不能建立過期的原廠鬧鐘。")
+        final NativeAlarmPlan plan;
+        try{plan=NativeAlarmPlan.create(timestamp,repeat,System.currentTimeMillis(),java.time.ZoneId.systemDefault());}
+        catch(IllegalArgumentException e){
+            new AlertDialog.Builder(this).setTitle("請調整原廠鬧鐘設定").setMessage(e.getMessage())
                 .setPositiveButton("知道了",null).show();return;
         }
-        if(timestamp-System.currentTimeMillis()>24L*3600000L &&
-            !"每日".equals(repeat) && !"每週".equals(repeat)){
-            new AlertDialog.Builder(this).setTitle("原廠時鐘無法指定日期")
-                .setMessage("這筆提醒不是未來 24 小時內的鬧鐘。Android 公開原廠時鐘介面僅能設定時、分，若現在送出，可能會提早在明天響。\n\n請在日曆頁啟用『日曆有聲提醒自動同步』，改由 Junba 以完整年月日排程；或等接近提醒日期時再建立原廠鬧鐘。")
-                .setPositiveButton("前往日曆同步",(d,w)->go("日曆"))
-                .setNegativeButton("取消",null).show();return;
-        }
-        final String name=title.isEmpty()?"Junba 提醒":title;
-        // A Clock intent has clock hour, minute and optional weekdays, but no absolute calendar date.
-        final String warning="將呼叫 vivo 時鐘建立鬧鐘，需在原廠畫面完成確認。\n\n"+
-            "重要：Android 公開原廠鬧鐘介面無法指定完整年月日；名稱中的日期只是文字。\n"+
-            "原廠時鐘可能設為最近的相同時間，而非活動當日；每月規則也需要原廠自行核對。\n\n"+
-            "提醒："+fmt.format(new Date(timestamp))+"｜"+name;
-        new AlertDialog.Builder(this).setTitle("送往原廠時鐘／需核對").setMessage(warning)
-            .setPositiveButton("開啟 vivo 時鐘",(d,w)->{
-                Calendar time=Calendar.getInstance();time.setTimeInMillis(timestamp);
-                Intent intent=new Intent(AlarmClock.ACTION_SET_ALARM);
-                intent.putExtra(AlarmClock.EXTRA_HOUR,time.get(Calendar.HOUR_OF_DAY));
-                intent.putExtra(AlarmClock.EXTRA_MINUTES,time.get(Calendar.MINUTE));
-                intent.putExtra(AlarmClock.EXTRA_MESSAGE,dateFmt.format(new Date(timestamp))+" "+name);
-                intent.putExtra(AlarmClock.EXTRA_SKIP_UI,false);
-                if("每日".equals(repeat)||"每週".equals(repeat)){
-                    ArrayList<Integer> days=new ArrayList<>();
-                    if("每日".equals(repeat)){for(int i=Calendar.SUNDAY;i<=Calendar.SATURDAY;i++)days.add(i);}
-                    else days.add(time.get(Calendar.DAY_OF_WEEK));
-                    intent.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS,days);
-                }
+        final String name=title==null||title.trim().isEmpty()?"Junba 提醒":title.trim();
+        JSONObject previous=NativeLinkStore.findPreviousRequest(this,key,name,plan.when,repeat);
+        String warning="提醒："+name+"\n下一次預計時間："+fmt.format(new Date(plan.when))+
+            "\n時區："+TimeZone.getDefault().getID()+"\n重複："+plan.ruleLabel()+
+            "\n\n將開啟手機的時鐘 App，請核對時間、重複日、鈴聲及貪睡，並完成儲存。"+
+            "Android 公開介面無法指定完整日期，也無法讀回原廠是否建立成功；日期標籤只是文字。";
+        if(previous!=null)warning="已有送交紀錄（"+NativeLinkStore.status(this,previous.optString("key"))+"）。"+
+            "再次送出可能造成重複鬧鐘；修改記事也不會刪除或更新原廠的舊鬧鐘，請先核對。\n\n"+warning;
+        new AlertDialog.Builder(this).setTitle(previous==null?"送往原廠時鐘／需核對":"已有紀錄，仍要再次送出？")
+            .setMessage(warning)
+            .setPositiveButton(previous==null?"開啟時鐘設定":"仍要送出",(d,w)->{
+                // Revalidate after the confirmation dialog: never roll silently into tomorrow/next week.
                 try{
-                    startActivity(intent);
-                    NativeLinkStore.requested(this,key,source,name,timestamp);
-                    toast("已送交建立請求；狀態為待核對，非已建立成功");
-                }catch(Exception e){toast("vivo 時鐘沒有接受此建立請求；未記錄為已連動");}
-            }).setNegativeButton("取消",null).show();
+                    NativeAlarmPlan latest=NativeAlarmPlan.create(timestamp,repeat,System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+                    if(latest.when!=plan.when || latest.hour!=plan.hour || latest.minute!=plan.minute || !latest.days().equals(plan.days())){
+                        nativeAlarm(key,source,name,timestamp,repeat);return;
+                    }
+                }catch(IllegalArgumentException e){toast(e.getMessage());return;}
+                try{
+                    sendNativeAlarm(key,source,name,plan,false);
+                    toast("已送交建立請求；請完成原廠儲存後，再至連動紀錄手動核對");
+                }catch(Exception e){toast("時鐘沒有接受此建立請求；未記錄為已連動");}
+            }).setNeutralButton("先開啟時鐘核對",(d,w)->openNativeClock())
+            .setNegativeButton("取消",null).show();
+    }
+    private void sendNativeAlarm(String key,String source,String name,NativeAlarmPlan plan,boolean skipUi){
+        Intent intent=new Intent(AlarmClock.ACTION_SET_ALARM);
+        intent.putExtra(AlarmClock.EXTRA_HOUR,plan.hour);intent.putExtra(AlarmClock.EXTRA_MINUTES,plan.minute);
+        intent.putExtra(AlarmClock.EXTRA_MESSAGE,("不重複".equals(plan.repeat)?dateFmt.format(new Date(plan.when)):plan.ruleLabel())+" "+name);
+        intent.putExtra(AlarmClock.EXTRA_SKIP_UI,skipUi);
+        if(!plan.days().isEmpty())intent.putIntegerArrayListExtra(AlarmClock.EXTRA_DAYS,plan.days());
+        startActivity(intent);
+        // A logging failure after dispatch must never create a second local alarm.
+        try{NativeLinkStore.requested(this,key,source,name,plan.when,plan.repeat);}
+        catch(Exception error){toast("已送出原廠請求，但連動紀錄未完成儲存，請到原廠核對");}
     }
     private void exactSettings(){
         if(Build.VERSION.SDK_INT<31){toast("本機 Android 版本無須額外開啟此權限");return;}
@@ -225,7 +248,8 @@ public class MainActivity extends Activity {
     private void notesPage(){
         heading(content,"手機記事／提醒管理");
         button(content,"語音新增記事／鬧鐘",this::startVoiceNote);
-        button(content,"新增記事＋指定提醒",()->noteEditor(null));
+        aiEntry(content);
+        button(content,"手動新增／AI 無法判斷時調整",()->noteEditor(null));
         JSONArray a=ReminderStore.all(this);
         if(a.length()==0)line(content,"尚無 App 記事。由日曆／Gemini 建立的活動請至「日曆」頁讀取。");
         for(int i=0;i<a.length();i++){
@@ -235,7 +259,7 @@ public class MainActivity extends Activity {
             final long when=o.optLong("time");final int ahead=o.optInt("ahead");
             heading(content,title);
             line(content,"內容："+o.optString("content","無訊息"));
-            line(content,(o.optBoolean("remind",true)?"活動："+fmt.format(new Date(when))+"｜提前 "+ahead+" 分鐘｜"+repeat:"純記事（不設定提醒）")+
+            line(content,((o.optBoolean("remind",true)||NativeLinkStore.has(this,key))?"活動："+fmt.format(new Date(when))+"｜提前 "+ahead+" 分鐘｜"+repeat+"\nJunba 本機提醒："+(o.optBoolean("remind",true)?"啟用":"未啟用（請核對原廠時鐘）"):"純記事（不設定提醒）")+
                 "\n原廠連動："+NativeLinkStore.status(this,key));
             rowButtons(content,new String[]{"編輯","原廠鬧鐘","加入日曆"},new Runnable[]{
                 ()->noteEditor(o),()->nativeAlarm(key,"手機記事",title,when-ahead*60000L,repeat),
@@ -261,7 +285,10 @@ public class MainActivity extends Activity {
     }
     private void noteEditor(JSONObject old){noteEditor(old,null,null,null,null);}
     private void noteEditor(JSONObject old,String presetTitle,String presetBody,Long presetTime,Boolean presetRemind){
-        LinearLayout box=new LinearLayout(this);box.setOrientation(1);box.setPadding(dp(18),0,dp(18),0);
+        noteEditor(old,presetTitle,presetBody,presetTime,presetRemind,0,"不重複");
+    }
+    private void noteEditor(JSONObject old,String presetTitle,String presetBody,Long presetTime,Boolean presetRemind,int presetAhead,String presetRepeat){
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),0,dp(18),0);
         EditText title=new EditText(this);title.setSingleLine(true);title.setHint("主題（空白自動填無訊息）");
         String initialTitle=old==null?(presetTitle!=null?presetTitle:getPreferences(0).getString("draft_title","")):old.optString("title","");
         title.setText(initialTitle);box.addView(title);
@@ -296,11 +323,18 @@ public class MainActivity extends Activity {
         int[] advValues={0,1,5,10,30,60,1440,7200};
         line(box,"提前提醒");Spinner adv=new Spinner(this);
         adv.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,advOptions));box.addView(adv);
-        if(old!=null){for(int i=0;i<advValues.length;i++)if(advValues[i]==old.optInt("ahead"))adv.setSelection(i);}
+        if(old==null&&presetAhead>0){
+            boolean listed=false;for(int value:advValues)if(value==presetAhead)listed=true;
+            if(!listed){advValues=Arrays.copyOf(advValues,advValues.length+1);advValues[advValues.length-1]=presetAhead;
+                advOptions=Arrays.copyOf(advOptions,advOptions.length+1);advOptions[advOptions.length-1]=presetAhead+" 分鐘前（AI）";
+                adv.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,advOptions));}
+        }
+        final int[] chosenAdvValues=advValues;
+        for(int i=0;i<advValues.length;i++)if(advValues[i]==(old!=null?old.optInt("ahead"):presetAhead))adv.setSelection(i);
         line(box,"App 重複排程");Spinner rep=new Spinner(this);
         String[] repeats={"不重複","每日","每週","每月"};
         rep.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,repeats));box.addView(rep);
-        if(old!=null){for(int i=0;i<repeats.length;i++)if(repeats[i].equals(old.optString("repeat")))rep.setSelection(i);}
+        for(int i=0;i<repeats.length;i++)if(repeats[i].equals(old!=null?old.optString("repeat"):presetRepeat))rep.setSelection(i);
         CheckBox createNative=new CheckBox(this);createNative.setText("儲存後另開 vivo 原廠時鐘建立（需核對，無法指定完整日期）");box.addView(createNative);
         line(box,"會先儲存完整記事，再嘗試鬧鐘排程；權限不足也不會刪掉你已輸入的文字。");
         ScrollView view=new ScrollView(this);view.addView(box);
@@ -308,11 +342,11 @@ public class MainActivity extends Activity {
             .setView(view).setPositiveButton("先存記事，再設定提醒",(dialog,which)->{
                 String headline=title.getText().toString().trim();if(headline.isEmpty())headline="無訊息";
                 String text=body.getText().toString().trim();if(text.isEmpty())text="無訊息";
-                int a=advValues[adv.getSelectedItemPosition()];String r=repeats[rep.getSelectedItemPosition()];
+                int a=chosenAdvValues[adv.getSelectedItemPosition()];String r=repeats[rep.getSelectedItemPosition()];
                 try{
                     int id;if(old==null)id=ReminderStore.putWithContentAndReminder(this,headline,text,c.getTimeInMillis(),a,r,remind.isChecked());
                     else{id=old.optInt("id");ReminderStore.updateFull(this,id,headline,text,c.getTimeInMillis(),a,r,remind.isChecked());}
-                    getPreferences(0).edit().remove("draft_title").remove("draft_content").remove("voice_draft").apply();
+                    getPreferences(0).edit().remove("draft_title").remove("draft_content").remove("voice_draft").remove("ai_parsed_draft").remove("voice_creation_id").apply();
                     sync();render();
                     if(!remind.isChecked())toast("記事已儲存（未設定提醒）");
                     else if(!ReminderStore.canExact(this))toast("記事已儲存；請開啟精確鬧鐘權限，排程尚未成功");
@@ -324,65 +358,146 @@ public class MainActivity extends Activity {
                     .putString("draft_content",body.getText().toString()).apply();
             }).show();
     }
+    private void aiEntry(LinearLayout target){
+        line(target,"例如：明天下午兩點開會，提前三十分鐘提醒我。AI 會整理時間與重複規則，你確認後才建立。");
+        line(target,"按『語音交給 AI』即同意將這次辨識文字傳給 Gemini；文字輸入則在按下送出時傳送。");
+        button(target,"語音交給 AI，自動整理記事／鬧鐘",this::startVoiceNote);
+        button(target,"輸入一句話，讓 AI 整理",()->voiceReview(getPreferences(0).getString("voice_draft","")));
+        if(!getPreferences(0).getString("voice_draft","").isEmpty())button(target,"繼續上次草稿",()->{
+            String raw=getPreferences(0).getString("voice_draft","");
+            try{confirmVoiceParsed(new JSONObject(getPreferences(0).getString("ai_parsed_draft","")),raw);}
+            catch(Exception e){voiceReview(raw);}
+        });
+    }
+    private AiDraftState voiceDraftState(){
+        return new AiDraftState(new AiDraftState.Storage(){
+            public String read(String key){return getPreferences(0).getString(key,"");}
+            public void write(Map<String,String> changes){
+                android.content.SharedPreferences.Editor edit=getPreferences(0).edit();
+                for(Map.Entry<String,String> change:changes.entrySet()){
+                    if(change.getValue()==null)edit.remove(change.getKey());else edit.putString(change.getKey(),change.getValue());
+                }edit.apply();
+            }
+        });
+    }
+    private void rememberVoice(String raw){voiceDraftState().replaceRaw(raw);}
     private void startVoiceNote(){
+        voiceAiConsent=true;
         Intent i=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
         i.putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-TW");
-        i.putExtra(RecognizerIntent.EXTRA_PROMPT,"說出記事或提醒，例如：明天下午兩點提醒我開會");
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT,"說出記事或提醒，例如：明天下午兩點開會，提前三十分鐘提醒");
         try{startActivityForResult(i,VOICE_REQUEST);}
-        catch(Exception ex){
-            toast("手機未提供語音辨識服務，可改用文字輸入");
-            voiceReview(getPreferences(0).getString("voice_draft",""));
-        }
+        catch(Exception ex){voiceAiConsent=false;toast("手機未提供語音辨識服務，可輸入一句話交給 AI");
+            voiceReview(getPreferences(0).getString("voice_draft",""));}
     }
     private void voiceReview(String raw){
-        getPreferences(0).edit().putString("voice_draft",raw).apply();
+        rememberVoice(raw);
         EditText input=new EditText(this);input.setText(raw);input.setMinLines(3);
-        new AlertDialog.Builder(this).setTitle("語音文字已保留，確認要如何處理")
-            .setMessage("語音先由手機的語音辨識服務轉成文字。選擇 Gemini 解析才會把這段文字送到 Gemini API；不會自行建立鬧鐘。")
-            .setView(input).setPositiveButton("Gemini 辨識時間",(d,w)->{
-                String transcript=input.getText().toString().trim();
-                getPreferences(0).edit().putString("voice_draft",transcript).apply();
-                if(transcript.isEmpty()){noteEditor(null,"無訊息","無訊息",null,false);return;}
-                String key=SecretStore.load(this);
-                if(key.isEmpty()){
-                    toast("尚未儲存 Gemini Key，先保留原文讓你手動編輯記事");
-                    noteEditor(null,"無訊息",transcript,null,false);return;
-                }
-                toast("Gemini 正在辨識，語音原文已保留");
-                new Thread(()->{
-                    try{
-                        String model=getPreferences(0).getString("gemini_model","gemini-3.8-flash");
-                        JSONObject parsed=GeminiNoteParser.parse(key,model,transcript);
-                        runOnUiThread(()->confirmVoiceParsed(parsed,transcript));
-                    }catch(Exception ex){
-                        runOnUiThread(()->{
-                            toast("辨識失敗，原文已保留："+ex.getMessage());
-                            noteEditor(null,"無訊息",transcript,null,false);
-                        });
-                    }
-                }).start();
-            }).setNeutralButton("直接存記事",(d,w)->noteEditor(null,"無訊息",input.getText().toString(),null,false))
-            .setNegativeButton("先保留草稿",(d,w)->getPreferences(0).edit()
-                .putString("voice_draft",input.getText().toString()).apply()).show();
+        input.addTextChangedListener(new TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            public void onTextChanged(CharSequence s,int start,int before,int count){rememberVoice(s.toString());}
+            public void afterTextChanged(Editable e){}
+        });
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("一句話交給 AI")
+            .setMessage("按下送出，這段文字會傳給 Gemini，自動整理記事、日期、提前時間與重複規則；最後由你確認建立。")
+            .setView(input).setPositiveButton("送出並自動整理",null)
+            .setNeutralButton("只存文字記事",(d,w)->noteEditor(null,"無訊息",input.getText().toString(),null,false))
+            .setNegativeButton("保留草稿",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            if(input.getText().toString().trim().isEmpty()){input.setError("請說出或輸入一句指令");return;}
+            dialog.dismiss();analyzeVoice(input.getText().toString());
+        }));dialog.show();
+    }
+    private void analyzeVoice(String transcript){
+        rememberVoice(transcript);
+        String key=SecretStore.load(this);
+        if(key.isEmpty()){
+            EditText keyField=new EditText(this);keyField.setSingleLine(true);
+            keyField.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            AlertDialog setup=new AlertDialog.Builder(this).setTitle("首次使用：儲存 Gemini 金鑰")
+                .setMessage("金鑰只在手機加密儲存。儲存後會將本次文字交給 Gemini，自動選可用模型；不用再手動設定模型。")
+                .setView(keyField).setPositiveButton("儲存並整理",null).setNegativeButton("保留草稿",null).create();
+            setup.setOnShowListener(d->setup.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+                String value=keyField.getText().toString().trim();if(value.isEmpty()){keyField.setError("請輸入金鑰");return;}
+                try{SecretStore.save(this,value);getPreferences(0).edit().remove("gemini_model").apply();
+                    keyField.setText("");setup.dismiss();analyzeVoice(transcript);}
+                catch(Exception e){toast("金鑰儲存未完成，原文已保留");}
+            }));setup.show();return;
+        }
+        final int request=++voiceRequestId;
+        AlertDialog progress=new AlertDialog.Builder(this).setTitle("AI 正在整理…")
+            .setMessage("正在整理記事與提醒設定。原文已保留，完成後一次確認即可建立。")
+            .setNegativeButton("先關閉並保留草稿",(d,w)->voiceRequestId++).create();
+        progress.setOnCancelListener(d->voiceRequestId++);aiProgress=progress;progress.show();
+        new Thread(()->{
+            try{
+                JSONObject parsed=GeminiNoteParser.parse(key,getPreferences(0).getString("gemini_model",""),transcript);
+                runOnUiThread(()->{
+                    if(request!=voiceRequestId||isFinishing()||isDestroyed())return;
+                    progress.dismiss();
+                    if(!voiceDraftState().rememberParsed(transcript,parsed.toString()))return;
+                    getPreferences(0).edit().putString("gemini_model",parsed.optString("_model")).apply();confirmVoiceParsed(parsed,transcript);
+                });
+            }catch(Exception error){runOnUiThread(()->{
+                if(request!=voiceRequestId||isFinishing()||isDestroyed())return;
+                progress.dismiss();new AlertDialog.Builder(this).setTitle("AI 尚未完成，草稿已保留")
+                    .setMessage(GeminiApi.errorMessage(error)).setPositiveButton("直接重試",(d,w)->analyzeVoice(transcript))
+                    .setNeutralButton("補充／修改原文",(d,w)->voiceReview(transcript)).setNegativeButton("稍後再試",null).show();
+            });}
+        }).start();
     }
     private void confirmVoiceParsed(JSONObject parsed,String transcript){
-        String title=parsed.optString("title","無訊息");if(title.trim().isEmpty())title="無訊息";
-        String body=parsed.optString("content",transcript);if(body.trim().isEmpty())body="無訊息";
-        String date=parsed.optString("dateTime","");long time=0L;
-        if(parsed.optBoolean("hasReminder",false)&&!date.isEmpty())try{
-            SimpleDateFormat parser=new SimpleDateFormat("yyyy-MM-dd HH:mm",Locale.TAIWAN);
-            parser.setLenient(false);time=parser.parse(date).getTime();
-            if(time<=System.currentTimeMillis())time=0L;
-        }catch(Exception ignored){}
-        final String t=title,b=body;final Long when=time>0?time:null;
-        final boolean hasReminder=when!=null;
-        new AlertDialog.Builder(this).setTitle("Gemini 辨識完成，請確認")
-            .setMessage("主題："+t+"\n內容："+b+"\n提醒："+(hasReminder?fmt.format(new Date(when)):"無明確未來時間，只存記事")+
-                "\n\n只有確認後才會寫入 Junba；不是直接寫入 vivo 原廠時鐘。")
-            .setPositiveButton("進入編輯／儲存",(d,w)->noteEditor(null,t,b,when,hasReminder))
-            .setNeutralButton("只存記事",(d,w)->noteEditor(null,t,b,null,false))
-            .setNegativeButton("保留語音草稿",(d,w)->{}).show();
+        AiReminderDraft draft=AiReminderDraft.fromJson(parsed,transcript,System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),0,dp(18),0);
+        line(box,"主題："+draft.title+"\n內容："+draft.content);
+        if(draft.hasReminder)line(box,"活動："+fmt.format(new Date(draft.eventTime))+"\n提醒："+fmt.format(new Date(draft.reminderTime()))+
+            "（提前 "+draft.advanceMinutes+" 分鐘）\n重複："+draft.repeat);
+        else line(box,draft.issue.isEmpty()?"純記事，不設定鬧鐘":"需要補充："+draft.issue);
+        RadioGroup target=new RadioGroup(this);RadioButton nativeClock=new RadioButton(this),localClock=new RadioButton(this);
+        nativeClock.setId(View.generateViewId());localClock.setId(View.generateViewId());
+        if(draft.hasReminder){
+            nativeClock.setText("原廠鬧鐘：自動送出建立請求");localClock.setText("Junba 本機鬧鐘");
+            target.addView(nativeClock);target.addView(localClock);box.addView(target);
+            try{NativeAlarmPlan.create(draft.reminderTime(),draft.repeat,System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+                target.check(nativeClock.getId());}
+            catch(IllegalArgumentException error){nativeClock.setEnabled(false);target.check(localClock.getId());line(box,error.getMessage());}
+            line(box,"只建立所選的一種鬧鐘。原廠支援時可直接建立；不支援自動建立時仍可能顯示原廠畫面。若無法開啟原廠，改用 Junba 提醒；原廠接受請求不代表已成功儲存，仍需核對。");
+        }
+        ScrollView scrollView=new ScrollView(this);scrollView.addView(box);
+        AlertDialog preview=new AlertDialog.Builder(this).setTitle("AI 已整理好，確認即可建立")
+            .setView(scrollView).setPositiveButton(draft.issue.isEmpty()?"確認建立":"補充這個問題",null)
+            .setNeutralButton(draft.issue.isEmpty()?"需要時再調整":"只儲存記事",(d,w)->{
+                if(!draft.issue.isEmpty())saveAiNote(parsed,transcript,false,false);
+                else noteEditor(null,draft.title,draft.content,draft.hasReminder?draft.eventTime:null,draft.hasReminder,draft.advanceMinutes,draft.repeat);
+            }).setNegativeButton("保留草稿",null).create();
+        preview.setOnShowListener(d->preview.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            preview.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);preview.dismiss();
+            if(!draft.issue.isEmpty()){voiceReview(transcript+"\n補充：");return;}
+            saveAiNote(parsed,transcript,draft.hasReminder,nativeClock.isChecked());
+        }));preview.show();
+    }
+    private void saveAiNote(JSONObject parsed,String transcript,boolean remind,boolean nativeClock){
+        AiReminderDraft draft=AiReminderDraft.fromJson(parsed,transcript,System.currentTimeMillis(),java.time.ZoneId.systemDefault());
+        if(remind&&!draft.hasReminder){confirmVoiceParsed(parsed,transcript);return;}
+        final NativeAlarmPlan nativePlan;
+        try{nativePlan=remind&&nativeClock?NativeAlarmPlan.create(draft.reminderTime(),draft.repeat,System.currentTimeMillis(),java.time.ZoneId.systemDefault()):null;}
+        catch(IllegalArgumentException e){toast(e.getMessage());confirmVoiceParsed(parsed,transcript);return;}
+        AiNoteCreation saved;
+        try{saved=ReminderStore.createAi(this,getPreferences(0).getString("voice_creation_id",""),draft,remind&&!nativeClock);}
+        catch(Exception e){toast("記事未完成儲存，原文與 AI 預覽已保留");return;}
+        String outcome="記事已儲存（未設定提醒）";
+        if(!saved.created)outcome="這份記事已儲存，沒有重複新增或再次送出鬧鐘；請核對連動紀錄";
+        else if(nativePlan!=null){
+            try{sendNativeAlarm("note:"+saved.id,"AI 語音／文字",draft.title,nativePlan,true);
+                outcome="記事已儲存，已自動送出原廠建立請求；請核對實際鬧鐘";}
+            catch(Exception e){
+                try{ReminderStore.updateFull(this,saved.id,draft.title,draft.content,draft.eventTime,draft.advanceMinutes,draft.repeat,true);
+                    saved.note.put("remind",true);outcome=ReminderStore.schedule(this,saved.note)?"記事已儲存；原廠無法開啟，已改用 Junba 鬧鐘":"記事已儲存；原廠無法開啟，Junba 尚未取得精確鬧鐘權限";}
+                catch(Exception failure){toast("記事已儲存，提醒未完成；草稿仍保留，請核對記事");return;}
+            }
+        }else if(remind)outcome=ReminderStore.schedule(this,saved.note)?"記事與 Junba 鬧鐘已建立":"記事已儲存；尚未取得精確鬧鐘權限，提醒未排程";
+        voiceDraftState().clearAfterSave(saved.note.optString("creationId"));sync();render();toast(outcome);
     }
     private ArrayList<Long> selectedCalendarIds(){
         ArrayList<Long> ids=new ArrayList<>();if(!canReadCalendar())return ids;
@@ -627,10 +742,14 @@ public class MainActivity extends Activity {
             String key=o.optString("key"),title=o.optString("title");
             heading(content,title);
             line(content,o.optString("source")+"｜"+fmt.format(new Date(o.optLong("when")))+"\n"+
-                NativeLinkStore.status(this,key)+"（由使用者自行確認）");
+                NativeLinkStore.status(this,key)+"（由使用者自行確認）"+
+                "\n重複："+o.optString("repeat","舊紀錄未記載，請到原廠核對"));
             rowButtons(content,new String[]{"原廠時鐘","我已核對","改為待核對"},new Runnable[]{
                 this::openNativeClock,
-                ()->{NativeLinkStore.confirmed(this,key);render();},
+                ()->new AlertDialog.Builder(this).setTitle("已在原廠時鐘儲存並核對？")
+                    .setMessage("請確認時間、重複日與音效。這只記錄你的核對結果，App 無法讀取原廠鬧鐘狀態。")
+                    .setPositiveButton("已儲存並核對",(d,w)->{NativeLinkStore.confirmed(this,key);render();})
+                    .setNegativeButton("尚未",null).show(),
                 ()->{NativeLinkStore.unconfirm(this,key);render();}
             });card(content);
         }
@@ -694,12 +813,12 @@ public class MainActivity extends Activity {
         content.addView(field);
         button(content,"儲存 Key（加密）",()->{
             String key=field.getText().toString().trim();if(key.isEmpty()){toast("請貼上 Key");return;}
-            try{SecretStore.save(this,key);field.setText("");toast("Key 已加密儲存在此手機");render();}
+            try{SecretStore.save(this,key);getPreferences(0).edit().remove("gemini_model").apply();field.setText("");toast("Key 已加密儲存在此手機");render();}
             catch(Exception e){toast("無法儲存 Key："+e.getClass().getSimpleName());}
         });
-        String current=getPreferences(0).getString("gemini_model","gemini-3.8-flash");
-        line(content,"目前使用的模型："+current);
-        button(content,"一鍵查詢可用 Gemini 模型／選用",()->{
+        String current=getPreferences(0).getString("gemini_model","");
+        line(content,"目前使用的模型："+(current.isEmpty()?"自動選擇可用模型":current));
+        button(content,"進階：查詢模型／手動指定（平常自動選擇）",()->{
             String key=field.getText().toString().trim();if(key.isEmpty())key=SecretStore.load(this);
             if(key.isEmpty()){toast("請先輸入或儲存 API Key");return;}
             fetchGeminiModels(key);
@@ -717,11 +836,16 @@ public class MainActivity extends Activity {
     }
     private void queryPage(){
         heading(content,"Gemini 智慧查詢");
-        button(content,"語音建立記事／鬧鐘",this::startVoiceNote);
+        aiEntry(content);
         line(content,"可使用自己輸入的問題，搭配已授權讀取的近期日曆活動與 App 記事。\n"+
-            "按下查詢才會將當次問題及摘要傳給 Gemini API，不會傳送 API Key 或取得語音歷史。");
+            "按下查詢才會將當次問題及摘要傳給 Gemini API，API Key 僅用於 Gemini 連線驗證，不會放進記事內容，也不會取得語音歷史。");
         EditText input=new EditText(this);input.setHint("例如：未來一週有哪些會議或記事？");
-        input.setMinLines(2);content.addView(input);
+        input.setMinLines(2);input.setText(getPreferences(0).getString("query_draft",""));content.addView(input);
+        input.addTextChangedListener(new TextWatcher(){
+            public void beforeTextChanged(CharSequence s,int start,int count,int after){}
+            public void onTextChanged(CharSequence s,int start,int before,int count){getPreferences(0).edit().putString("query_draft",s.toString()).apply();}
+            public void afterTextChanged(Editable e){}
+        });
         CheckBox include=new CheckBox(this);include.setText("這次查詢包含近期授權日曆與 App 記事摘要");content.addView(include);
         button(content,"開始 Gemini 查詢",()->{
             String q=input.getText().toString().trim();if(q.isEmpty()){toast("請輸入問題");return;}
@@ -744,92 +868,50 @@ public class MainActivity extends Activity {
         return s.toString();
     }
     private void fetchGeminiModels(String key){
-        toast("正在查詢這組金鑰可用的模型…");
+        toast("正在查詢可用模型；平常使用 AI 會自動選擇，不必先執行這一步");
         new Thread(()->{
-            HttpURLConnection c=null;String error=null;ArrayList<String> names=new ArrayList<>();
             try{
-                URL url=new URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000");
-                c=(HttpURLConnection)url.openConnection();c.setConnectTimeout(12000);c.setReadTimeout(20000);
-                c.setRequestProperty("x-goog-api-key",key);
-                int statusCode=c.getResponseCode();
-                InputStream in=statusCode>=400?c.getErrorStream():c.getInputStream();
-                StringBuilder sb=new StringBuilder();
-                if(in!=null)try(BufferedReader r=new BufferedReader(new InputStreamReader(in,"UTF-8"))){
-                    String line;while((line=r.readLine())!=null&&sb.length()<300000)sb.append(line);
-                }
-                if(statusCode!=200)error="HTTP "+statusCode+"："+sb.toString().substring(0,Math.min(350,sb.length()));
-                else{
-                    JSONArray a=new JSONObject(sb.toString()).optJSONArray("models");
-                    if(a!=null)for(int i=0;i<a.length();i++){
-                        JSONObject o=a.optJSONObject(i);if(o==null)continue;
-                        String name=o.optString("name","");JSONArray methods=o.optJSONArray("supportedGenerationMethods");
-                        boolean supported=false;if(methods!=null)for(int j=0;j<methods.length();j++)
-                            if("generateContent".equals(methods.optString(j)))supported=true;
-                        if(supported && name.startsWith("models/") && !name.contains("tts") && !name.contains("image"))
-                            names.add(name.substring(7));
-                    }
-                    if(names.isEmpty())error="金鑰已回應，但找不到支援文字生成的模型。";
-                }
-            }catch(Exception ex){error="查詢失敗："+ex.getClass().getSimpleName();}
-            finally{if(c!=null)c.disconnect();}
-            final String finalError=error;
-            runOnUiThread(()->{
-                if(finalError!=null)new AlertDialog.Builder(this).setTitle("模型清單讀取失敗")
-                    .setMessage(finalError).setPositiveButton("確定",null).show();
-                else new AlertDialog.Builder(this).setTitle("選擇此 Key 可用模型")
-                    .setItems(names.toArray(new String[0]),(d,which)->{
-                        getPreferences(0).edit().putString("gemini_model",names.get(which)).apply();
-                        toast("已選："+names.get(which));render();
-                    }).setNegativeButton("取消",null).show();
-            });
+                List<String> names=GeminiApi.models(GeminiApi.https(key));
+                runOnUiThread(()->{
+                    if(isFinishing()||isDestroyed())return;
+                    new AlertDialog.Builder(this).setTitle("進階設定：指定模型")
+                        .setItems(names.toArray(new String[0]),(d,which)->{
+                            getPreferences(0).edit().putString("gemini_model",names.get(which)).apply();render();
+                        }).setNeutralButton("恢復自動選擇",(d,w)->{getPreferences(0).edit().remove("gemini_model").apply();render();})
+                        .setNegativeButton("關閉",null).show();
+                });
+            }catch(Exception error){runOnUiThread(()->{
+                if(isFinishing()||isDestroyed())return;
+                new AlertDialog.Builder(this).setTitle("模型清單尚未讀取完成").setMessage(GeminiApi.errorMessage(error))
+                    .setPositiveButton("重試",(d,w)->fetchGeminiModels(key)).setNegativeButton("關閉",null).show();
+            });}
         }).start();
     }
     private void callGemini(String key,String prompt,boolean test){
-        toast(test?"正在測試連線":"正在查詢，稍候顯示結果");
+        final int requestId=++queryRequestId;
+        AlertDialog progress=new AlertDialog.Builder(this).setTitle(test?"正在確認 Gemini 連線…":"Gemini 正在查詢…")
+            .setMessage("會自動選擇可用模型；若網路逾時可直接重試。")
+            .setNegativeButton("先關閉",(d,w)->queryRequestId++).create();
+        progress.setOnCancelListener(d->queryRequestId++);queryProgress=progress;progress.show();
         new Thread(()->{
-            String outcome;
-            HttpURLConnection c=null;
             try{
-                String model=getPreferences(0).getString("gemini_model","gemini-3.8-flash");
-                URL url=new URL("https://generativelanguage.googleapis.com/v1beta/models/"+
-                    java.net.URLEncoder.encode(model,"UTF-8")+":generateContent");
-                c=(HttpURLConnection)url.openConnection();c.setRequestMethod("POST");
-                c.setRequestProperty("x-goog-api-key",key);
-                c.setRequestProperty("Content-Type","application/json; charset=utf-8");
-                c.setConnectTimeout(12000);c.setReadTimeout(25000);c.setDoOutput(true);
-                JSONObject request=new JSONObject();JSONObject part=new JSONObject().put("text",prompt);
-                request.put("contents",new JSONArray().put(new JSONObject().put("parts",new JSONArray().put(part))));
-                try(OutputStream os=c.getOutputStream()){os.write(request.toString().getBytes("UTF-8"));}
-                int code=c.getResponseCode();InputStream in=code>=400?c.getErrorStream():c.getInputStream();
-                String data="";if(in!=null)try(BufferedReader r=new BufferedReader(new InputStreamReader(in,"UTF-8"))){
-                    String line;StringBuilder sb=new StringBuilder();while((line=r.readLine())!=null&&sb.length()<20000)sb.append(line);data=sb.toString();
-                }
-                if(code==200){
-                    JSONObject response=new JSONObject(data);JSONArray candidates=response.optJSONArray("candidates");
-                    String answer="";
-                    if(candidates!=null&&candidates.length()>0){JSONObject first=candidates.optJSONObject(0);
-                        JSONObject contentObj=first==null?null:first.optJSONObject("content");
-                        JSONArray parts=contentObj==null?null:contentObj.optJSONArray("parts");
-                        if(parts!=null)for(int i=0;i<parts.length();i++){
-                            JSONObject p=parts.optJSONObject(i);
-                            if(p!=null&&!p.optBoolean("thought",false))answer+=p.optString("text","");
-                        }
-                    }
-                    outcome=test?"Gemini 連線成功 (HTTP 200)\n"+answer:answer.isEmpty()?"Gemini 回覆沒有文字內容":answer;
-                }else{
-                    JSONObject error=new JSONObject(data);JSONObject detail=error.optJSONObject("error");
-                    String message=detail==null?"請檢查 Key、模型及配額":detail.optString("message","請檢查金鑰或配額");
-                    String hint=code==404?"\n請按『查詢可用 Gemini 模型』選擇此 Key 可用的模型。":
-                        code==400?"\n模型或要求格式不相容。":
-                        code==401||code==403?"\n請檢查 API Key 或所屬專案的權限。":
-                        code==429?"\n已達額度或速率限制，請稍後重試。":"";
-                    outcome="連線失敗 (HTTP "+code+")："+message+hint;
-                }
-            }catch(Exception e){outcome="連線失敗："+e.getClass().getSimpleName()+"（請檢查網路／Key）";}
-            finally{if(c!=null)c.disconnect();}
-            final String result=outcome;
-            runOnUiThread(()->new AlertDialog.Builder(this).setTitle(test?"Gemini API 連線測試":"Gemini 查詢結果")
-                .setMessage(result).setPositiveButton("確定",null).show());
+                JSONObject body=new JSONObject().put("contents",new JSONArray().put(new JSONObject()
+                    .put("parts",new JSONArray().put(new JSONObject().put("text",prompt)))))
+                    .put("generationConfig",new JSONObject().put("maxOutputTokens",2048));
+                JSONObject response=GeminiApi.generate(GeminiApi.https(key),getPreferences(0).getString("gemini_model",""),body);
+                String answer=GeminiApi.text(response);
+                runOnUiThread(()->{
+                    if(requestId!=queryRequestId||isFinishing()||isDestroyed())return;
+                    progress.dismiss();getPreferences(0).edit().putString("gemini_model",response.optString("_model")).apply();
+                    new AlertDialog.Builder(this).setTitle(test?"Gemini 連線成功":"Gemini 查詢結果")
+                        .setMessage(answer).setPositiveButton("確定",null).show();
+                });
+            }catch(Exception error){runOnUiThread(()->{
+                if(requestId!=queryRequestId||isFinishing()||isDestroyed())return;
+                progress.dismiss();new AlertDialog.Builder(this).setTitle("Gemini 尚未完成")
+                    .setMessage(GeminiApi.errorMessage(error)).setPositiveButton("直接重試",(d,w)->callGemini(key,prompt,test))
+                    .setNegativeButton("稍後再試",null).show();
+            });}
         }).start();
     }
     private void exportBackup(){
@@ -848,9 +930,12 @@ public class MainActivity extends Activity {
         if(request==VOICE_REQUEST){
             if(result==RESULT_OK&&data!=null){
                 ArrayList<String> results=data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
-                if(results!=null&&!results.isEmpty()){voiceReview(results.get(0));return;}
+                if(results!=null&&!results.isEmpty()){
+                    boolean consent=voiceAiConsent;voiceAiConsent=false;
+                    if(consent)analyzeVoice(results.get(0));else voiceReview(results.get(0));return;
+                }
             }
-            toast("沒有收到語音文字，既有記事不受影響");return;
+            voiceAiConsent=false;toast("沒有收到語音文字，既有記事不受影響");return;
         }
         if(result!=RESULT_OK||data==null||data.getData()==null)return;
         Uri uri=data.getData();

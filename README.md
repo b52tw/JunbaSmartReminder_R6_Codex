@@ -43,3 +43,11 @@
 - `reference/previous_sources/`：先前 R4/R5 候選原始碼存檔，供比較資料格式（不是目前的建置輸入）
 
 **隱私提醒：**此包不應包含真實 Gemini API Key、手機記事備份、簽章 keystore 或使用者的私人日曆資料。
+
+## APK 簽章與更新
+
+R5／R6 的 Actions debug APK 可能使用不同金鑰，無法直接覆蓋安裝。已新增手動 `Build Signed Android APK` 工作流程，需先設定固定金鑰的 GitHub Secrets 與預期憑證指紋；未設定會停止，不會生成臨時金鑰替代。這無法自動解決既有 R5 的簽章不相容，請先保留舊版與資料。設定與安全移轉限制見 [`docs/APK_SIGNING.md`](docs/APK_SIGNING.md)。
+
+## AI 語音與一句話建立（工作區改進）
+
+已改為主動按語音交給 AI／輸入一句話 → 自動選可用模型 → 一次預覽確認建立記事與所選鬧鐘。提前分鐘與重複規則會保留；逾時可直接重試，草稿不清除。原廠以公開 API 請求自動建立，仍受時鐘支援與日期限制。這些改動尚未合併到主分支或真機驗證，詳見 [`docs/AI_WORKFLOW.md`](docs/AI_WORKFLOW.md)。

@@ -20,7 +20,17 @@ public final class NativeLinkStore {
         }
         return null;
     }
-    static void requested(Context c,String key,String source,String title,long when){
+    static JSONObject findPreviousRequest(Context c,String key,String title,long when,String repeat){
+        JSONObject sameSource=find(c,key);if(sameSource!=null)return sameSource;
+        JSONArray a=all(c);
+        for(int i=0;i<a.length();i++){
+            JSONObject o=a.optJSONObject(i);
+            if(o!=null && title.equals(o.optString("title")) && when==o.optLong("when") &&
+                repeat.equals(o.optString("repeat","不重複")))return o;
+        }
+        return null;
+    }
+    static void requested(Context c,String key,String source,String title,long when,String repeat){
         JSONArray a=all(c),b=new JSONArray();
         for(int i=0;i<a.length();i++){
             JSONObject o=a.optJSONObject(i);if(o!=null&&!key.equals(o.optString("key")))b.put(o);
@@ -28,7 +38,7 @@ public final class NativeLinkStore {
         try{
             JSONObject n=new JSONObject();n.put("key",key);n.put("source",source);
             n.put("title",title);n.put("when",when);n.put("requested",System.currentTimeMillis());
-            n.put("status","pending");b.put(n);
+            n.put("repeat",repeat);n.put("status","pending");b.put(n);
         }catch(JSONException ignored){}
         save(c,b);
     }
