@@ -1,9 +1,10 @@
 name: Build Android APK (debug development only)
+run-name: R6 AI test APK (${{ github.ref_name }})
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, codex/ai-reminder-flow ]
 
 permissions:
   contents: read
@@ -71,20 +72,43 @@ jobs:
 
       - name: Build debug APK
         shell: bash
-        run: gradle --no-daemon --stacktrace assembleDebug testDebugUnitTest lintDebug
+        run: |
+          bash tools/test_native_alarm.sh
+          gradle --no-daemon --max-workers=2 --stacktrace assembleDebug testDebugUnitTest lintDebug
 
       - name: Verify output APK
         shell: bash
         run: |
           set -euo pipefail
           test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
-          sha256sum app/build/outputs/apk/debug/app-debug.apk
+          APK_DIR=app/build/outputs/apk/debug
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK_DIR/app-debug.apk" > "$APK_DIR/signing-certificate.txt"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK_DIR/app-debug.apk" > "$APK_DIR/apk-info.txt"
+          (
+            cd "$APK_DIR"
+            sha256sum app-debug.apk > SHA256SUMS.txt
+          )
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          folder=Path('app/build/outputs/apk/debug')
+          (folder/'source-commit.txt').write_text(os.environ['GITHUB_SHA']+'\n')
+          summary='R6 AI 測試版已通過建置、時間規則檢查、單元測試與 Lint。\n\n'
+          summary+='下載本次執行的 **JunbaSmartReminder-R6-AI-debug-APK** artifact，解壓後安裝 app-debug.apk。\n\n'
+          summary+='這是 debug 測試版，未使用固定正式金鑰；不同簽章不能覆蓋手機舊版。請先保留資料並核對簽章，不要為安裝而直接解除安裝。\n\n'
+          summary+='原廠自動建立與 Gemini 連線仍需真機驗證。\n\n來源 commit：'+os.environ['GITHUB_SHA']+'\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(summary)
+          PY
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: JunbaSmartReminder-v0.1-R6-debug-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: JunbaSmartReminder-R6-AI-debug-APK
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/SHA256SUMS.txt
+            app/build/outputs/apk/debug/signing-certificate.txt
+            app/build/outputs/apk/debug/apk-info.txt
+            app/build/outputs/apk/debug/source-commit.txt
           if-no-files-found: error
           retention-days: 30
