@@ -17,6 +17,7 @@ public final class AlarmAudioService extends Service {
     private Ringtone ringtone;
     private int notificationId=800000;
     private String currentTitle="Junba 提醒";
+    private boolean calendarRelay;
     private final Handler timeout=new Handler(Looper.getMainLooper());
     private final Runnable stopLater=this::stopSelf;
     static PendingIntent openPendingIntent(Context c){
@@ -35,7 +36,7 @@ public final class AlarmAudioService extends Service {
             stopRing();
             try{
                 AlarmManager a=(AlarmManager)getSystemService(ALARM_SERVICE);
-                Intent alarm=new Intent(this,AlarmReceiver.class);
+                Intent alarm=new Intent(this,AlarmReceiver.class).setAction(calendarRelay?CalendarNotificationListener.ACTION:"tw.junba.reminder.SNOOZED");
                 alarm.putExtra("id",notificationId);alarm.putExtra("title",currentTitle);
                 PendingIntent p=PendingIntent.getBroadcast(this,notificationId,alarm,PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
                 long t=System.currentTimeMillis()+5*60000L;
@@ -43,7 +44,7 @@ public final class AlarmAudioService extends Service {
             }catch(Exception ignored){}
             stopSelf();return START_NOT_STICKY;
         }
-        if(i!=null){notificationId=i.getIntExtra("id",800000);currentTitle=i.getStringExtra("title");}
+        if(i!=null){notificationId=i.getIntExtra("id",800000);currentTitle=i.getStringExtra("title");calendarRelay=i.getBooleanExtra("calendar_relay",false);}
         if(currentTitle==null||currentTitle.isEmpty())currentTitle="Junba 提醒";
         AlarmReceiver.ensureChannel(this);
         Notification note=new Notification.Builder(this,AlarmReceiver.CHANNEL)
@@ -69,7 +70,7 @@ public final class AlarmAudioService extends Service {
                 ringtone.play();
             }
         }catch(Exception ignored){}
-        timeout.removeCallbacks(stopLater);timeout.postDelayed(stopLater,120000);
+        timeout.removeCallbacks(stopLater);timeout.postDelayed(stopLater,i==null?120000:Math.max(1000,Math.min(120000,i.getLongExtra("duration_ms",120000))));
         return START_NOT_STICKY;
     }
     private void stopRing(){

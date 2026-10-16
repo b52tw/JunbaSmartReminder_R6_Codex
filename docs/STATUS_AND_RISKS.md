@@ -1,3 +1,5 @@
+> 歷史 R6 設計：使用者已改採 R7 簡化流程，請先閱讀 [R7_SIMPLE_WORKFLOW.md](R7_SIMPLE_WORKFLOW.md) 與專案 README；不要恢復 App 內 AI／日曆瀏覽。
+
 # 2026-10-16 專案現況與風險（原始碼盤點；非真機驗收）
 
 ## 已看到的程式

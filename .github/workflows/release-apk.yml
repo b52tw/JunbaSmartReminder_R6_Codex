@@ -57,7 +57,7 @@ jobs:
 
       - name: Test and build
         run: |
-          bash tools/test_native_alarm.sh
+          set -euo pipefail
           gradle --no-daemon --max-workers=2 --stacktrace assembleDebug assembleRelease testDebugUnitTest lintDebug
           python3 tests/test_release_signing.py app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/debug/app-debug.apk -v
 
@@ -79,7 +79,7 @@ jobs:
       - name: Upload verified APK only
         uses: actions/upload-artifact@v4
         with:
-          name: JunbaSmartReminder-R6-signed-release-APK
+          name: JunbaSmartReminder-R7-simple-signed-release-APK
           path: |
             ${{ runner.temp }}/junba-release/app-release.apk
             ${{ runner.temp }}/junba-release/SHA256SUMS.txt

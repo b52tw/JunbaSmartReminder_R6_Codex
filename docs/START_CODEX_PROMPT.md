@@ -1,3 +1,5 @@
+> 歷史 R6 設計：使用者已改採 R7 簡化流程，請先閱讀 [R7_SIMPLE_WORKFLOW.md](R7_SIMPLE_WORKFLOW.md) 與專案 README；不要恢復 App 內 AI／日曆瀏覽。
+
 # 第一則交給 Codex 的工作指令（可直接複製）
 
 請接手這個 GitHub Android 專案「Junba 智慧提醒 R6」。先完整閱讀 repo 根目錄 `AGENTS.md`、`README.md`、`docs/CODEX_TASKS.md`、`docs/DATA_MIGRATION.md`、`docs/STATUS_AND_RISKS.md`。不要重寫成空專案；沿用套件 `tw.junba.reminder`、繁體中文介面及現有 Java/Gradle 架構。

@@ -1,3 +1,5 @@
+> 歷史 R6 設計：使用者已改採 R7 簡化流程，請先閱讀 [R7_SIMPLE_WORKFLOW.md](R7_SIMPLE_WORKFLOW.md) 與專案 README；不要恢復 App 內 AI／日曆瀏覽。
+
 # 原廠鬧鐘建立與核對
 
 本輪以 Android 公開 `ACTION_SET_ALARM` 介面改善送出流程。開啟的是手機能處理此介面的時鐘 App，不能保證一定由 vivo 原廠時鐘接收，也不能讀取原廠完整清單、確認儲存結果或控制原廠貪睡次數。

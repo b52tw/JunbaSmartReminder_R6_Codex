@@ -11,7 +11,7 @@ public class AlarmReceiver extends BroadcastReceiver {
     static void ensureChannel(Context c){
         NotificationManager n=(NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE);
         if(Build.VERSION.SDK_INT>=26){
-            NotificationChannel ch=new NotificationChannel(CHANNEL,"Junba R6 鬧鐘響鈴",NotificationManager.IMPORTANCE_HIGH);
+            NotificationChannel ch=new NotificationChannel(CHANNEL,"Junba 鬧鐘響鈴",NotificationManager.IMPORTANCE_HIGH);
             ch.setDescription("由 Junba 排程、播放系統預設鬧鐘鈴聲，可停止或稍後提醒；非 vivo 原廠時鐘項目");
             ch.enableVibration(true);
             ch.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
@@ -21,12 +21,25 @@ public class AlarmReceiver extends BroadcastReceiver {
         }
     }
     @Override public void onReceive(Context c,Intent event){
+        if(event==null)return;
+        if("tw.junba.reminder.CALENDAR_REMINDER".equals(event.getAction()))return; // Retired mirror.
+        boolean relay=CalendarNotificationListener.ACTION.equals(event.getAction());
+        if(relay&&!CalendarNotificationListener.enabled(c))return;
+        if(event.getAction()==null){
+            boolean active=false;
+            org.json.JSONArray notes=ReminderStore.all(c);
+            for(int n=0;n<notes.length();n++){
+                org.json.JSONObject note=notes.optJSONObject(n);
+                if(note!=null&&note.optInt("id")==event.getIntExtra("id",7000)&&note.optBoolean("remind",true)){active=true;break;}
+            }
+            if(!active)return;
+        }
         ensureChannel(c);
         String title=event.getStringExtra("title");
         if(title==null||title.trim().isEmpty())title="Junba 提醒";
         int id=event.getIntExtra("id",7000);
         Intent audio=new Intent(c,AlarmAudioService.class).setAction(AlarmAudioService.PLAY);
-        audio.putExtra("title",title);audio.putExtra("id",id);
+        audio.putExtra("title",title);audio.putExtra("id",id);audio.putExtra("calendar_relay",relay);
         try {
             if(Build.VERSION.SDK_INT>=26)c.startForegroundService(audio);
             else c.startService(audio);
@@ -42,6 +55,7 @@ public class AlarmReceiver extends BroadcastReceiver {
             try{((NotificationManager)c.getSystemService(Context.NOTIFICATION_SERVICE)).notify(id,notification);}
             catch(SecurityException ignored){}
         }
+        if(event.getAction()!=null)return;
         org.json.JSONArray notes=ReminderStore.all(c);
         for(int j=0;j<notes.length();j++){
             org.json.JSONObject o=notes.optJSONObject(j);

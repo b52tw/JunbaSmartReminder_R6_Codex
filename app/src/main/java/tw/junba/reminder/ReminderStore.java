@@ -37,13 +37,16 @@ public final class ReminderStore {
         JSONArray a=all(c);a.put(o);save(c,a);
         if(remind)schedule(c,o);return id;
     }
-    static AiNoteCreation createAi(Context c,String token,AiReminderDraft draft,boolean remind) throws JSONException {
+    static SimpleNote.Change saveForStock(Context c,Integer editingId,String token,SimpleNote draft) throws JSONException {
         android.content.SharedPreferences prefs=c.getSharedPreferences("junba",0);
-        // Reject malformed stored JSON instead of silently replacing existing data.
         JSONArray existing=new JSONArray(prefs.getString("notes","[]"));
-        AiNoteCreation result=AiNoteCreation.prepare(existing,prefs.getInt("next_note_id",10000),token,draft,remind);
-        if(result.created&&!prefs.edit().putString("notes",result.notes.toString()).putInt("next_note_id",result.nextId).commit())
-            throw new IllegalStateException("記事尚未寫入儲存空間，草稿已保留。");
+        SimpleNote.Change result=SimpleNote.prepare(existing,prefs.getInt("next_note_id",10000),editingId,token,draft);
+        if(result.created){
+            if(!prefs.edit().putString("notes",result.notes.toString()).putInt("next_note_id",result.nextId).commit())
+                throw new IllegalStateException("記事尚未寫入，草稿已保留。");
+            // Stored remind=false is also checked by the receiver if cancellation is refused.
+            try{cancel(c,result.id);}catch(RuntimeException ignored){}
+        }
         return result;
     }
     private static String safe(String s){return s==null||s.trim().isEmpty()?"無訊息":s.trim();}
@@ -68,9 +71,16 @@ public final class ReminderStore {
         throw new JSONException("找不到記事");
     }
     static void remove(Context c,int id) {
-        JSONArray a=all(c), b=new JSONArray();
-        for(int i=0;i<a.length();i++){JSONObject o=a.optJSONObject(i);if(o!=null){if(o.optInt("id")==id)cancel(c,id);else b.put(o);}}
-        save(c,b);
+        try{
+            android.content.SharedPreferences prefs=c.getSharedPreferences("junba",0);
+            JSONArray a=new JSONArray(prefs.getString("notes","[]")),b=new JSONArray();
+            for(int i=0;i<a.length();i++){
+                JSONObject o=a.optJSONObject(i);
+                if(o==null||o.optInt("id")!=id)b.put(a.get(i));
+            }
+            if(!prefs.edit().putString("notes",b.toString()).commit())throw new IllegalStateException();
+            try{cancel(c,id);}catch(RuntimeException ignored){}
+        }catch(JSONException e){throw new IllegalStateException("記事資料無法讀取，未刪除。",e);}
     }
     static PendingIntent intent(Context c,JSONObject o) {
         int id=o.optInt("id");Intent i=new Intent(c,AlarmReceiver.class);

@@ -8,7 +8,7 @@ public class BootReceiver extends BroadcastReceiver {
             ||Intent.ACTION_TIME_CHANGED.equals(action)||Intent.ACTION_TIMEZONE_CHANGED.equals(action)){
             AlarmReceiver.ensureChannel(context);
             ReminderStore.reschedule(context);
-            CalendarMirrorStore.reschedule(context);
+            LegacyCalendarCleanup.stop(context);
         }
     }
 }

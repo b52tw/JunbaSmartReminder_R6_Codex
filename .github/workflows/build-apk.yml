@@ -1,10 +1,10 @@
 name: Build Android APK (debug development only)
-run-name: R6 AI test APK (${{ github.ref_name }})
+run-name: R7 simple reminder APK (${{ github.ref_name }})
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, codex/ai-reminder-flow ]
+    branches: [ main, master, codex/ai-reminder-flow, codex/simple-reminder ]
 
 permissions:
   contents: read
@@ -65,15 +65,15 @@ jobs:
           test -f app/src/main/AndroidManifest.xml
           test -f app/src/main/java/tw/junba/reminder/MainActivity.java
           test -f app/src/main/java/tw/junba/reminder/NativeLinkStore.java
-          test -f app/src/main/java/tw/junba/reminder/CalendarMirrorStore.java
-          test -f app/src/main/java/tw/junba/reminder/SecretStore.java
+          test -f app/src/main/java/tw/junba/reminder/SimpleNote.java
+          test -f app/src/main/java/tw/junba/reminder/CalendarNotificationListener.java
           gradle --version
           echo 'Project structure OK'
 
       - name: Build debug APK
         shell: bash
         run: |
-          bash tools/test_native_alarm.sh
+          set -euo pipefail
           gradle --no-daemon --max-workers=2 --stacktrace assembleDebug testDebugUnitTest lintDebug
 
       - name: Verify output APK
@@ -93,17 +93,17 @@ jobs:
           from pathlib import Path
           folder=Path('app/build/outputs/apk/debug')
           (folder/'source-commit.txt').write_text(os.environ['GITHUB_SHA']+'\n')
-          summary='R6 AI 測試版已通過建置、時間規則檢查、單元測試與 Lint。\n\n'
-          summary+='下載本次執行的 **JunbaSmartReminder-R6-AI-debug-APK** artifact，解壓後安裝 app-debug.apk。\n\n'
+          summary='R7 簡易記事鬧鐘測試版已通過建置、日期與通知規則單元測試及 Lint。\n\n'
+          summary+='下載本次執行的 **JunbaSmartReminder-R7-simple-debug-APK** artifact，解壓後安裝 app-debug.apk。\n\n'
           summary+='這是 debug 測試版，未使用固定正式金鑰；不同簽章不能覆蓋手機舊版。請先保留資料並核對簽章，不要為安裝而直接解除安裝。\n\n'
-          summary+='原廠自動建立與 Gemini 連線仍需真機驗證。\n\n來源 commit：'+os.environ['GITHUB_SHA']+'\n'
+          summary+='不含 App 內 AI 或日曆瀏覽。儲存記事後送交原廠核對；完整日期仍需在原廠手動確認。Google 日曆通知響鈴與鎖屏背景行為仍需 vivo 真機驗證。\n\n來源 commit：'+os.environ['GITHUB_SHA']+'\n'
           Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(summary)
           PY
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: JunbaSmartReminder-R6-AI-debug-APK
+          name: JunbaSmartReminder-R7-simple-debug-APK
           path: |
             app/build/outputs/apk/debug/app-debug.apk
             app/build/outputs/apk/debug/SHA256SUMS.txt
