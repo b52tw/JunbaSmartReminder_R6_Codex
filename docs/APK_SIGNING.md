@@ -62,20 +62,19 @@ Set-Clipboard -Value ''
 
 ## 下載位置
 
-只有把這次變更合併到 GitHub 主分支、完成設定並成功執行 workflow 後，才會出現可下載的正式附件：
+在包含此 workflow 的分支完成簽章設定並成功執行後，才會出現可下載的正式附件：
 
-**Actions → Build Signed Android APK → 成功的執行紀錄 → Artifacts → JunbaSmartReminder-R6-signed-release-APK**。
+**Actions → Build Signed Android APK → 成功的執行紀錄 → Artifacts → JunbaSmartReminder-R8-controls-signed-release-APK**。
 
 下載 ZIP 後取出 `app-release.apk`。附件還包含 `SHA256SUMS.txt` 與 `signing-certificate.txt`，可比對檔案與憑證。現階段尚未設定正式秘密、未執行遠端 workflow，也沒有發布新版；本機驗證的測試金鑰不會交付給使用者。
 
 ## 本機驗證
 
 ```bash
-bash tools/test_native_alarm.sh
-gradle --no-daemon --max-workers=2 assembleDebug assembleRelease lintDebug
+gradle --no-daemon --max-workers=2 assembleDebug assembleRelease testDebugUnitTest lintDebug
 python3 tests/test_release_signing.py app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/debug/app-debug.apk -v
 ```
 
 簽章回歸測試只使用臨時金鑰，涵蓋重複使用同一金鑰、缺少設定、錯誤 Base64、錯誤密碼、錯誤憑證、debug APK 拒絕、既有檔案保護與暫存清理。測試成功不代表手機 R5 可直接升級，也不代表遠端 Actions 已執行。
 
-本輪本機結果：23 項時間規則檢查及 9 項簽章回歸測試通過，`assembleDebug assembleRelease lintDebug` 成功；Lint 仍有 12 個警告、0 個錯誤。正式簽章設定與手機移轉驗證尚未完成。
+本輪本機結果：23 項時間規則檢查及 9 項簽章回歸測試通過，`assembleDebug assembleRelease testDebugUnitTest lintDebug` 成功；Lint 仍有 12 個警告、0 個錯誤。正式簽章設定與手機移轉驗證尚未完成。

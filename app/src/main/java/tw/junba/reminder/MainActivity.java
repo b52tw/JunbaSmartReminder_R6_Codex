@@ -21,17 +21,26 @@ import java.text.SimpleDateFormat;
 import java.time.ZoneId;
 import java.util.*;
 
-/** R7: name/content/date/time, then the user verifies the stock Clock. */
+/** Simple notes plus visible controls and local notification-delivery history. */
 public class MainActivity extends Activity {
     private LinearLayout content;
     private String page="notes";
     private static final int EXPORT=401;
+    private final Handler updates=new Handler(Looper.getMainLooper());
+    private final Runnable redraw=()->{if(content!=null)render();};
+    private final SharedPreferences.OnSharedPreferenceChangeListener alarmChanged=(prefs,key)->{
+        updates.removeCallbacks(redraw);updates.postDelayed(redraw,100);
+    };
     private final SimpleDateFormat dateFormat=new SimpleDateFormat("yyyy/MM/dd HH:mm",Locale.TAIWAN);
     private int dp(int value){return (int)(value*getResources().getDisplayMetrics().density+0.5f);}
     @Override public void onCreate(Bundle state){
         super.onCreate(state);AlarmReceiver.ensureChannel(this);LegacyCalendarCleanup.stop(this);
-        if(state!=null)page=state.getString("page","notes");render();
+        if(state!=null)page=state.getString("page","notes");
+        if(getIntent().getBooleanExtra("show_alarms",false))page="alarms";render();
     }
+    @Override protected void onStart(){super.onStart();getSharedPreferences(AlarmStore.PREF,0).registerOnSharedPreferenceChangeListener(alarmChanged);}
+    @Override protected void onStop(){getSharedPreferences(AlarmStore.PREF,0).unregisterOnSharedPreferenceChangeListener(alarmChanged);updates.removeCallbacks(redraw);super.onStop();}
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra("show_alarms",false))page="alarms";render();}
     @Override public void onResume(){super.onResume();ReminderStore.reschedule(this);if(content!=null)render();}
     @Override protected void onSaveInstanceState(Bundle state){state.putString("page",page);super.onSaveInstanceState(state);}
     private TextView text(LinearLayout parent,String value,int size){
@@ -51,13 +60,31 @@ public class MainActivity extends Activity {
     private void toast(String value){Toast.makeText(this,value,Toast.LENGTH_LONG).show();}
     private void render(){
         ScrollView scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setBackgroundColor(0xff101012);
-        content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(dp(20),dp(20),dp(20),dp(24));scroll.addView(content);setContentView(scroll);
-        heading(content,"Junba 簡易鬧鐘 R7");text(content,"作者：峻爸",14);
+        LinearLayout frame=new LinearLayout(this);frame.setOrientation(LinearLayout.VERTICAL);frame.setBackgroundColor(0xff101012);
+        Button stop=button(frame,"■ 停止目前 Junba 響鈴",()->{AlarmStore.stopNow(this);toast("已要求停止 Junba 響鈴；Google 原通知及原廠鬧鐘需各自處理");render();});
+        stop.setTextColor(Color.WHITE);stop.setBackgroundTintList(android.content.res.ColorStateList.valueOf(0xff9a3034));
+        content=new LinearLayout(this);content.setOrientation(LinearLayout.VERTICAL);content.setPadding(dp(20),dp(12),dp(20),dp(24));scroll.addView(content);
+        frame.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
+        frame.setOnApplyWindowInsetsListener((view,insets)->{
+            if(Build.VERSION.SDK_INT>=30){android.graphics.Insets bars=insets.getInsets(android.view.WindowInsets.Type.systemBars()|android.view.WindowInsets.Type.displayCutout());view.setPadding(bars.left,bars.top,bars.right,bars.bottom);}
+            else view.setPadding(insets.getSystemWindowInsetLeft(),insets.getSystemWindowInsetTop(),insets.getSystemWindowInsetRight(),insets.getSystemWindowInsetBottom());
+            return insets;
+        });
+        setContentView(frame);frame.requestApplyInsets();dateFormat.setTimeZone(TimeZone.getDefault());
+        heading(content,"Junba 簡易鬧鐘 R8");text(content,"作者：峻爸",14);
+        JSONObject current=AlarmStore.current(this);
+        if(current!=null){LinearLayout box=card();heading(box,"目前 Junba 提醒");text(box,current.optString("title"),18);snoozeButtons(box,current);}
+        if(!AlarmStore.notificationsVisible(this)){
+            text(content,"Junba 通知尚未允許，日曆響鈴暫停；開啟後才能顯示停止與延後控制。",16);
+            button(content,"開啟 Junba 通知",this::notificationSettings);
+        }
+        if("alarms".equals(page)){button(content,"‹ 返回記事",()->{page="notes";render();});alarmHistory();return;}
         if("settings".equals(page)){button(content,"‹ 返回記事",()->{page="notes";render();});settings();return;}
         text(content,"填名稱、內容、日期與時間，儲存後到原廠時鐘完成核對。",16);
         button(content,"＋ 新增記事鬧鐘",()->editor(null));
         if(!getPreferences(0).getString("simple_draft_token","").isEmpty())button(content,"繼續未完成記事",this::resumeDraft);
         button(content,"開啟原廠時鐘",this::openClock);
+        button(content,"日曆提醒紀錄／延後提醒",()->{page="alarms";render();});
         button(content,"日曆通知響鈴／設定",()->{page="settings";render();});
         JSONArray notes=ReminderStore.all(this);if(notes.length()==0)text(content,"尚無記事。",16);
         for(int i=notes.length()-1;i>=0;i--){
@@ -169,13 +196,83 @@ public class MainActivity extends Activity {
         try{startActivity(new Intent(AlarmClock.ACTION_SHOW_ALARMS));}
         catch(Exception e){toast("請從手機桌面開啟原廠時鐘");}
     }
+    private void snoozeButtons(LinearLayout box,JSONObject record){
+        button(box,"10 分鐘後提醒",()->snooze(record,10));
+        button(box,"30 分鐘後提醒",()->snooze(record,30));
+        button(box,"1 小時後提醒",()->snooze(record,60));
+    }
+    private void snooze(JSONObject record,int minutes){
+        try{long when=AlarmStore.snooze(this,record.optString("key"),minutes);toast("已排定 "+dateFormat.format(new Date(when))+" 再提醒");render();}
+        catch(Exception e){toast("延後未成功，請檢查 Junba 通知、精確鬧鐘及日曆連動開關；目前響鈴可按上方停止");}
+    }
+    private String alarmStatus(JSONObject r){
+        switch(r.optString("status")){
+            case "scheduled":return "已排定響鈴";case "snoozed":return "已延後至 "+dateFormat.format(new Date(r.optLong("when")));
+            case "ringing":return r.optLong("activeUntil")>System.currentTimeMillis()?"正在響鈴":"響鈴已結束／中斷";
+            case "stopped":return "已停止";case "timed_out":return "響鈴已自動結束";case "cancelled":return "已取消 Junba 提醒";
+            case "superseded":return "另一筆提醒接續響鈴";case "blocked":return "通知未允許，未響鈴";
+            case "missed":return "已過提醒時間";case "interrupted":return "響鈴因重新啟動中斷";default:return "未完成響鈴／排程";
+        }
+    }
+    private void alarmHistory(){
+        heading(content,"日曆通知與響鈴紀錄");
+        text(content,"只記錄已接收的提醒，不瀏覽 Google 日曆。上方停止鈕只控制 Junba，不會停止 Google 原通知或原廠鬧鐘。",15);
+        JSONArray records=AlarmStore.all(this);if(records.length()==0)text(content,"尚無提醒紀錄；更新前的舊通知無法還原。",16);
+        for(int n=records.length()-1;n>=0;n--){
+            JSONObject r=records.optJSONObject(n);if(r==null)continue;String key=r.optString("key");
+            LinearLayout box=card();heading(box,r.optString("title","無訊息"));
+            text(box,("calendar".equals(r.optString("source"))?"Google 日曆通知":"test".equals(r.optString("source"))?"音效測試":"舊版 Junba 記事提醒")+
+                " · "+dateFormat.format(new Date(r.optLong("receivedAt"))),14);
+            text(box,alarmStatus(r),17);if(!r.optString("error").isEmpty())text(box,r.optString("error"),15);
+            button(box,"延後／再次提醒…",()->new AlertDialog.Builder(this).setTitle("多久後再提醒？")
+                .setItems(new String[]{"10 分鐘","30 分鐘","1 小時"},(d,w)->snooze(r,new int[]{10,30,60}[w])).setNegativeButton("取消",null).show());
+            if(AlarmRecord.pending(r)||"ringing".equals(r.optString("status")))button(box,"取消這筆 Junba 提醒",()->{try{AlarmStore.cancel(this,key);render();}catch(Exception e){toast("取消未完成；仍可按上方停止目前聲音");}});
+            if("calendar".equals(r.optString("source"))){
+                button(box,"交給原廠建立鬧鐘…",()->stockCalendar(r));
+                if(r.has("stockRequestedAt"))text(box,"曾送出原廠請求："+dateFormat.format(new Date(r.optLong("stockWhen")))+"；仍須原廠核對。",14);
+                button(box,"開原廠核對／刪除鬧鐘",this::openClock);
+            }
+            button(box,"刪除這筆紀錄…",()->new AlertDialog.Builder(this).setTitle("刪除此筆紀錄？")
+                .setMessage("同時取消這筆 Junba 延後提醒。Google 日曆活動、原通知及原廠鬧鐘不會刪除。")
+                .setPositiveButton("刪除並取消",(d,w)->{try{AlarmStore.remove(this,key);render();}catch(Exception e){toast("紀錄未完整刪除，請重試");}}).setNegativeButton("保留",null).show());
+        }
+    }
+    private void stockCalendar(JSONObject record){
+        if(record.has("stockRequestedAt")){
+            new AlertDialog.Builder(this).setTitle("曾送過原廠建立請求")
+                .setMessage("再次送出可能增加一個鬧鐘。可以先開原廠核對。")
+                .setPositiveButton("仍要另建",(d,w)->stockCalendarEditor(record)).setNeutralButton("先開原廠",(d,w)->openClock()).setNegativeButton("取消",null).show();
+        }else stockCalendarEditor(record);
+    }
+    private void stockCalendarEditor(JSONObject record){
+        Calendar when=Calendar.getInstance();when.add(Calendar.MINUTE,10);when.set(Calendar.SECOND,0);when.set(Calendar.MILLISECOND,0);
+        if("snoozed".equals(record.optString("status"))&&record.optLong("when")>System.currentTimeMillis()+60000)when.setTimeInMillis(record.optLong("when"));
+        LinearLayout box=new LinearLayout(this);box.setOrientation(LinearLayout.VERTICAL);box.setPadding(dp(18),0,dp(18),dp(8));
+        text(box,"鬧鐘名稱",16);EditText name=new EditText(this);name.setSingleLine(true);name.setText("Google 日曆提醒");box.addView(name);
+        text(box,record.optString("title"),16);
+        Button date=button(box,"",()->new DatePickerDialog(this,(v,y,m,d)->{when.set(y,m,d);updatePickerLabels(box,when);},when.get(Calendar.YEAR),when.get(Calendar.MONTH),when.get(Calendar.DAY_OF_MONTH)).show());date.setTag("date");
+        Button time=button(box,"",()->new TimePickerDialog(this,(v,h,m)->{when.set(Calendar.HOUR_OF_DAY,h);when.set(Calendar.MINUTE,m);updatePickerLabels(box,when);},when.get(Calendar.HOUR_OF_DAY),when.get(Calendar.MINUTE),true).show());time.setTag("time");updatePickerLabels(box,when);
+        text(box,"請選擇要新增的鬧鐘日期時間；收到通知的時間不能當作活動開始時間。原廠只接收名稱與時分，完整日期仍由你核對。",14);
+        text(box,"Junba 已排定的延後提醒仍保留；若只要原廠響鈴，請另外取消 Junba 提醒。",14);
+        ScrollView scroll=new ScrollView(this);scroll.addView(box);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("建立原廠鬧鐘並核對").setView(scroll).setPositiveButton("送交原廠",null).setNegativeButton("取消",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                SimpleNote request=SimpleNote.create(name.getText().toString(),record.optString("title"),when.get(Calendar.YEAR),when.get(Calendar.MONTH)+1,when.get(Calendar.DAY_OF_MONTH),when.get(Calendar.HOUR_OF_DAY),when.get(Calendar.MINUTE),System.currentTimeMillis(),ZoneId.systemDefault());
+                startActivity(new Intent(AlarmClock.ACTION_SET_ALARM).putExtra(AlarmClock.EXTRA_HOUR,request.hour).putExtra(AlarmClock.EXTRA_MINUTES,request.minute).putExtra(AlarmClock.EXTRA_MESSAGE,request.label).putExtra(AlarmClock.EXTRA_SKIP_UI,false));
+                dialog.dismiss();
+                try{AlarmStore.requestedStock(this,record.optString("key"),request.time);toast("已送出請求，請在原廠核對日期時間並完成儲存");}
+                catch(Exception error){toast("已送出原廠請求，但紀錄未寫入；請直接在原廠核對");}
+            }catch(Exception error){toast("未送出原廠請求，請選未來日期時間或手動開啟時鐘");}
+        }));dialog.show();
+    }
     private void settings(){
         heading(content,"Google 日曆通知響鈴");
         text(content,"只在 Google 日曆原本的通知到達時，用 Junba 播放系統鬧鐘鈴聲。沒有日曆瀏覽、不讀取活動清單。Google 未送出通知時，不會自行補排。這不是寫入原廠時鐘。",16);
         CheckBox enabled=new CheckBox(this);enabled.setText("啟用 Google 日曆通知響鈴");enabled.setChecked(CalendarNotificationListener.enabled(this));content.addView(enabled);
         enabled.setOnCheckedChangeListener((v,on)->{
             if(on)new AlertDialog.Builder(this).setTitle("授權日曆通知連動？")
-                .setMessage("Android 的通知存取授權範圍較廣；本程式只處理 Google 日曆，忽略其他 App，不儲存通知內容，也沒有網路權限。收到日曆通知後另響 Junba 鬧鈴，原日曆提示仍可能保留。")
+                .setMessage("Android 的通知存取授權範圍較廣；本程式只處理 Google 日曆，忽略其他 App，只把已連動通知的標題與文字保存在手機供你查看、延後或刪除，不讀日曆清單，也沒有網路權限。收到日曆通知後另響 Junba 鬧鈴，原日曆提示仍可能保留。")
                 .setPositiveButton("啟用並設定",(d,w)->{getSharedPreferences(CalendarNotificationListener.PREF,0).edit().putBoolean("enabled",true).apply();
                     if(!CalendarNotificationListener.granted(this))listenerSettings();else render();})
                 .setNegativeButton("取消",(d,w)->render()).setOnCancelListener(d->render()).show();
@@ -185,35 +282,41 @@ public class MainActivity extends Activity {
             "\n精確鬧鐘："+(ReminderStore.canExact(this)?"已授權":"未授權")+"\nJunba 通知："+(notificationsGranted()?"已授權":"未授權"),16);
         if(!CalendarNotificationListener.granted(this))button(content,"設定日曆通知存取",this::listenerSettings);
         if(!ReminderStore.canExact(this))button(content,"允許精確鬧鐘",this::exactSettings);
-        if(!notificationsGranted())button(content,"允許 Junba 通知",()->requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101));
+        if(!AlarmStore.notificationsVisible(this))button(content,"允許 Junba 通知",this::notificationSettings);
         String status=getSharedPreferences(CalendarNotificationListener.PREF,0).getString("status","尚未收到可連動的 Google 日曆通知");text(content,status,14);
         text(content,"原廠記事鬧鐘由你在原廠核對；這裡的權限只供日曆通知及舊版 Junba 排程使用。",14);
         button(content,"測試 Junba 響鈴 5 秒",()->{
             Intent test=new Intent(this,AlarmAudioService.class).setAction(AlarmAudioService.PLAY).putExtra("id",900001).putExtra("title","Junba 響鈴測試").putExtra("duration_ms",5000L);
             try{startForegroundService(test);toast("只測試 Junba 音效；日曆連動需等實際通知驗證");}catch(Exception e){toast("系統未允許啟動響鈴，請檢查通知與背景設定");}
         });
-        button(content,"停止 Junba 響鈴",()->stopService(new Intent(this,AlarmAudioService.class)));
+        button(content,"日曆提醒紀錄／延後提醒",()->{page="alarms";render();});
         button(content,"開啟 Google 日曆",()->{
             Intent intent=getPackageManager().getLaunchIntentForPackage(CalendarNotificationRule.GOOGLE_CALENDAR);
             if(intent==null){toast("請從手機桌面開啟 Google 日曆");return;}try{startActivity(intent);}catch(Exception e){toast("無法開啟 Google 日曆");}
         });
-        heading(content,"資料與版本");text(content,"0.2.0-R7-simple\n舊記事與原廠請求紀錄保留；App 不含 AI、API Key 設定或網路權限。Gemini 語音請直接使用手機上的 Gemini。",14);
+        heading(content,"資料與版本");text(content,"0.3.0-R8-controls\n舊記事與原廠請求紀錄保留；App 不含 AI、API Key 設定或網路權限。Gemini 語音請直接使用手機上的 Gemini。",14);
         button(content,"匯出記事備份",this::exportBackup);
         text(content,"備份不含原廠時鐘資料或舊 API Key；不能單靠備份檔就假定可安全解除安裝。",14);
     }
-    private boolean notificationsGranted(){return Build.VERSION.SDK_INT<33||checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;}
+    private boolean notificationsGranted(){return AlarmStore.notificationsVisible(this);}
+    private void notificationSettings(){
+        if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},101);return;}
+        try{startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));}
+        catch(Exception e){toast("請到系統設定允許 Junba 通知及鬧鐘通知頻道");}
+    }
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);render();}
     private void listenerSettings(){try{startActivity(new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));}catch(Exception e){toast("請到系統設定的通知存取頁授權");}}
     private void exactSettings(){if(Build.VERSION.SDK_INT<31)return;try{startActivity(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}catch(Exception e){toast("請到系統設定允許 Junba 精確鬧鐘");}}
     private void exportBackup(){
         Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/json");
-        intent.putExtra(Intent.EXTRA_TITLE,"Junba_R7_Notes_Backup.json");try{startActivityForResult(intent,EXPORT);}catch(Exception e){toast("無法開啟備份儲存視窗");}
+        intent.putExtra(Intent.EXTRA_TITLE,"Junba_R8_Backup.json");try{startActivityForResult(intent,EXPORT);}catch(Exception e){toast("無法開啟備份儲存視窗");}
     }
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);if(request!=EXPORT||result!=RESULT_OK||data==null||data.getData()==null)return;
         try{
-            JSONObject backup=new JSONObject().put("version",4).put("notes",new JSONArray(getSharedPreferences("junba",0).getString("notes","[]")))
-                .put("native_links",new JSONArray(getSharedPreferences("junba",0).getString("native_links","[]")));
+            JSONObject backup=new JSONObject().put("version",5).put("notes",new JSONArray(getSharedPreferences("junba",0).getString("notes","[]")))
+                .put("native_links",new JSONArray(getSharedPreferences("junba",0).getString("native_links","[]")))
+                .put("alarm_records",new JSONArray(getSharedPreferences(AlarmStore.PREF,0).getString("records","[]")));
             byte[] bytes=backup.toString(2).getBytes(StandardCharsets.UTF_8);
             try(OutputStream out=getContentResolver().openOutputStream(data.getData(),"wt")){if(out==null)throw new IOException();out.write(bytes);}
             ByteArrayOutputStream copy=new ByteArrayOutputStream();

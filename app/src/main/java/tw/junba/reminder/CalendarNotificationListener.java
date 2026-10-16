@@ -18,6 +18,7 @@ public final class CalendarNotificationListener extends NotificationListenerServ
     static void disable(Context c){
         android.content.SharedPreferences prefs=c.getSharedPreferences(PREF,0);
         prefs.edit().putBoolean("enabled",false).apply();
+        AlarmStore.disableCalendar(c);
         try{
             JSONObject history=new JSONObject(prefs.getString("history","{}"));
             Iterator<String> keys=history.keys();
@@ -64,26 +65,27 @@ public final class CalendarNotificationListener extends NotificationListenerServ
         android.content.SharedPreferences prefs=getSharedPreferences(PREF,0);
         try{
             JSONObject history=new JSONObject(prefs.getString("history","{}"));JSONObject prior=history.optJSONObject(key);
-            if(prior!=null&&CalendarNotificationRule.duplicate((note.flags&Notification.FLAG_ONLY_ALERT_ONCE)!=0,
-                event.getPostTime(),now,prior.optLong("post"),prior.optLong("delivered")))return;
-            if(!ReminderStore.canExact(this)){result("收到日曆通知；精確鬧鐘權限尚未開啟，未排程");return;}
             Bundle extras=note.extras;CharSequence title=extras==null?null:extras.getCharSequence(Notification.EXTRA_TITLE);
             CharSequence body=extras==null?null:extras.getCharSequence(Notification.EXTRA_TEXT);
             String text="Google 日曆提醒"+(title==null?"":"："+title)+(body==null?"":"\n"+body);
-            AlarmManager alarms=(AlarmManager)getSystemService(ALARM_SERVICE);
-            alarms.setAlarmClock(new AlarmManager.AlarmClockInfo(now+1000L,AlarmAudioService.openPendingIntent(this)),
-                pending(this,key,text,PendingIntent.FLAG_UPDATE_CURRENT));
+            String contentHash=key(text);
+            if(prior!=null&&(CalendarNotificationRule.sameContent(contentHash,prior.optString("contentHash"))||
+                CalendarNotificationRule.duplicate((note.flags&Notification.FLAG_ONLY_ALERT_ONCE)!=0,
+                    event.getPostTime(),now,prior.optLong("post"),prior.optLong("delivered"))))return;
+            JSONObject record=AlarmStore.create(this,text,"calendar",key,now+1000L);
+            AlarmStore.scheduleNew(this,record);
             JSONObject trimmed=new JSONObject();Iterator<String> names=history.keys();int count=0;
             while(names.hasNext()&&count<63){String old=names.next();JSONObject item=history.optJSONObject(old);
                 if(item!=null&&now-item.optLong("delivered")<7L*86400000L){trimmed.put(old,item);count++;}}
-            trimmed.put(key,new JSONObject().put("post",event.getPostTime()).put("delivered",now));
+            trimmed.put(key,new JSONObject().put("post",event.getPostTime()).put("delivered",now).put("contentHash",contentHash));
             prefs.edit().putString("history",trimmed.toString()).apply();
-            result("收到日曆通知，已提交系統鬧鈴排程");
+            result("收到日曆通知，紀錄已保留；可在 App 停止或延後");
         }catch(Exception error){result("收到日曆通知，但系統未接受響鈴排程；請檢查權限");}
     }
     @Override public void onNotificationRemoved(StatusBarNotification event){
         if(event==null||!CalendarNotificationRule.GOOGLE_CALENDAR.equals(event.getPackageName()))return;
         String key=key(event.getKey());
+        AlarmStore.sourceRemoved(this,key);
         try{
             JSONObject history=new JSONObject(getSharedPreferences(PREF,0).getString("history","{}"));history.remove(key);
             getSharedPreferences(PREF,0).edit().putString("history",history.toString()).apply();

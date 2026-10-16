@@ -26,6 +26,12 @@ public class CalendarNotificationRuleTest {
         assertTrue(accepts(p,"event",false,false,now-120000));assertTrue(accepts(p,"event",false,false,now+30000));
         assertFalse(accepts(p,"event",false,false,now+30001));
     }
+    @Test public void unchangedNotificationContentDoesNotRestartAfterStop(){
+        assertTrue(CalendarNotificationRule.sameContent("same-digest","same-digest"));
+        assertFalse(CalendarNotificationRule.sameContent("new-reminder","old-reminder"));
+        assertFalse(CalendarNotificationRule.sameContent("",""));
+        assertFalse(CalendarNotificationRule.sameContent(null,"old"));
+    }
     @Test public void firstDeliveryIsAllowedEvenWithOnlyAlertOnce(){
         assertFalse(CalendarNotificationRule.duplicate(true,now,now,0,0));
     }

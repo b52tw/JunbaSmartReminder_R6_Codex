@@ -8,6 +8,9 @@ final class CalendarNotificationRule {
         if(category!=null&&!category.isEmpty()&&!"event".equals(category)&&!"reminder".equals(category))return false;
         return postTime>0&&postTime<=now+30000L&&postTime>=now-120000L;
     }
+    static boolean sameContent(String current,String previous){
+        return current!=null&&!current.isEmpty()&&current.equals(previous);
+    }
     static boolean duplicate(boolean onlyAlertOnce,long postTime,long now,long previousPost,long previousDelivery){
         return previousPost>0&&(previousPost==postTime||onlyAlertOnce||now-previousDelivery<30000L);
     }
