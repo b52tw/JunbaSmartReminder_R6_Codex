@@ -7,7 +7,7 @@ final class AlarmRecord {
     static JSONObject create(String key,String title,String source,String sourceKey,long now,long when) throws JSONException {
         return new JSONObject().put("key",key).put("title",title==null||title.trim().isEmpty()?"無訊息":title)
             .put("source",source).put("sourceKey",sourceKey).put("receivedAt",now).put("when",when)
-            .put("status","scheduled").put("generation",0).put("snoozeCount",0);
+            .put("status","calendar_setup".equals(source)?"reference":"scheduled").put("generation",0).put("snoozeCount",0);
     }
     static boolean pending(JSONObject record){return "scheduled".equals(record.optString("status"))||"snoozed".equals(record.optString("status"));}
     static JSONObject snoozed(JSONObject old,int minutes,long now) throws JSONException {

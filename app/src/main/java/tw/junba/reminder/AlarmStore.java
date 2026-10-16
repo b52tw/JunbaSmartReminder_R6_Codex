@@ -31,6 +31,9 @@ final class AlarmStore {
         return null;
     }
     static synchronized JSONObject create(Context c,String title,String source,String sourceKey,long when) throws JSONException {
+        return create(c,title,source,sourceKey,when,new JSONObject());
+    }
+    static synchronized JSONObject create(Context c,String title,String source,String sourceKey,long when,JSONObject metadata) throws JSONException {
         JSONArray a=read(c);long now=System.currentTimeMillis();
         // Keep all pending/current reminders. Only old finished history may be trimmed.
         JSONArray trimmed=new JSONArray();int discard=Math.max(0,a.length()-99);
@@ -40,7 +43,17 @@ final class AlarmStore {
             trimmed.put(a.get(i));
         }
         JSONObject record=AlarmRecord.create(UUID.randomUUID().toString(),title,source,sourceKey,now,when);
-        trimmed.put(record);write(c,trimmed);return record;
+        applyMetadata(record,metadata);trimmed.put(record);write(c,trimmed);return record;
+    }
+    private static void applyMetadata(JSONObject record,JSONObject metadata) throws JSONException {
+        for(String key:new String[]{"eventId","eventBegin","eventEnd","calendarId","accountName","accountType","calendarName","eventTitle","allDay","matchKind","notificationTitle","notificationText","notificationPostTime","testDurationMs","testConfirmedAt","suggestedStockTime"})
+            if(metadata.has(key))record.put(key,metadata.get(key));
+    }
+    static synchronized void annotate(Context c,String key,JSONObject metadata) throws JSONException {
+        JSONArray records=read(c);int i=index(records,key);if(i<0)return;
+        JSONObject record=records.getJSONObject(i);
+        if(record.has("eventId")&&"manual".equals(record.optString("matchKind"))&&!"manual".equals(metadata.optString("matchKind")))return;
+        applyMetadata(record,metadata);write(c,records);
     }
     private static PendingIntent pending(Context c,JSONObject r,int flags){
         Intent intent=new Intent(c,AlarmReceiver.class).setAction(FIRE).setData(Uri.parse("junba://alarm/"+r.optString("key")))

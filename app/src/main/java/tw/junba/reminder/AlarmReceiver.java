@@ -38,7 +38,8 @@ public class AlarmReceiver extends BroadcastReceiver {
                 AlarmStore.status(c,record.optString("key"),"blocked","Junba 通知已關閉，未響鈴；請開啟通知以取得停止與延後按鈕。");return;
             }
             Intent audio=new Intent(c,AlarmAudioService.class).setAction(AlarmAudioService.PLAY)
-                .putExtra("alarm_key",record.optString("key")).putExtra("generation",record.optInt("generation"));
+                .putExtra("alarm_key",record.optString("key")).putExtra("generation",record.optInt("generation"))
+                .putExtra("duration_ms",record.optLong("testDurationMs",120000));
             c.startForegroundService(audio);
         }catch(Exception ex){
             if(record!=null)try{AlarmStore.status(c,record.optString("key"),"failed","響鈴服務遭系統限制，請檢查背景權限。");}catch(Exception ignored){}

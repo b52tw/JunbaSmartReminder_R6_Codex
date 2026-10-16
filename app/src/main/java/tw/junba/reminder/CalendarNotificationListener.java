@@ -72,7 +72,11 @@ public final class CalendarNotificationListener extends NotificationListenerServ
             if(prior!=null&&(CalendarNotificationRule.sameContent(contentHash,prior.optString("contentHash"))||
                 CalendarNotificationRule.duplicate((note.flags&Notification.FLAG_ONLY_ALERT_ONCE)!=0,
                     event.getPostTime(),now,prior.optLong("post"),prior.optLong("delivered"))))return;
-            JSONObject record=AlarmStore.create(this,text,"calendar",key,now+1000L);
+            JSONObject metadata=new JSONObject().put("notificationTitle",title==null?"":title.toString())
+                .put("notificationText",body==null?"":body.toString()).put("notificationPostTime",event.getPostTime());
+            JSONObject record=AlarmStore.create(this,text,"calendar",key,now+1000L,metadata);
+            // Matching is optional and asynchronous; it never delays or gates the proven alarm path.
+            CalendarRepository.matchLater(this,record.optString("key"),title==null?"":title.toString(),event.getPostTime());
             AlarmStore.scheduleNew(this,record);
             JSONObject trimmed=new JSONObject();Iterator<String> names=history.keys();int count=0;
             while(names.hasNext()&&count<63){String old=names.next();JSONObject item=history.optJSONObject(old);

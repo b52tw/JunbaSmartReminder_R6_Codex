@@ -1,9 +1,9 @@
-# Junba 簡易鬧鐘 R8
+# Junba 簡易鬧鐘 R9
 
-依使用者最新決定，移除 App 內 Gemini／API Key、語音 AI 解析及日曆瀏覽，改為簡單記事交給原廠時鐘核對。作者：峻爸。
+依使用者最新決定，保留簡單記事交給原廠時鐘核對、停止／延後與通知紀錄；R9 恢復唯讀月份瀏覽與帳號選取，App 內 AI／API Key 不恢復。作者：峻爸。
 
 - 套件：`tw.junba.reminder`（保持原套件與資料位置）
-- 版本：`versionCode 8`、`versionName 0.3.0-R8-controls`
+- 版本：`versionCode 9`、`versionName 0.4.0-R9-calendar`
 - Java 17、Gradle 8.10.2、Android SDK 35；minSdk 26、targetSdk 35
 - 主要真機驗證目標：vivo V2413 / Android 16
 
@@ -22,9 +22,15 @@
 
 日曆通知的標題、文字、收到時間與處理狀態只保存在手機，通常保留最近 100 筆，未來排程保留；可刪除。從紀錄可手動選日期時間、交原廠建立鬧鐘，仍需核對日期與儲存，不能讀回原廠紀錄。詳見 [R8 操作與真機驗證](docs/R8_ALARM_CONTROLS.md)。
 
+## 月份、帳號與紅燈
+
+從「Google 日曆月份／帳號」主動允許讀取手機日曆，即可翻月、選日期與複選帳號／日曆；活動顯示帳號、日曆名稱與提醒時間。生日及 Google 工作只有在手機日曆提供資料時才能顯示。
+
+紅燈依真實 Google 通知與活動的唯一對應／本人確認，並顯示收到時間；測試不點紅燈。無法對應的通知留在紀錄，可手動確認，不猜同名活動或帳號。可測試單日活動的 Junba 響鈴（3 秒後響 5 秒），或開 Google 日曆由本人建立真正的通知測試。活動卡可交原廠建立單筆鬧鐘，完整日期仍需核對。詳見 [R9 流程與限制](docs/R9_CALENDAR_MONTH.md)。
+
 ## Google 日曆通知響鈴
 
-預設關閉。在「日曆通知響鈴／設定」主動啟用並授予通知存取、精確鬧鐘及 Junba 通知權限後，只轉接 `com.google.android.calendar` 實際到達的新提醒通知。由 Junba 透過 AlarmManager 和前景服務播放系統預設鬧鐘鈴聲，**不是在原廠時鐘新增項目**。沒有讀取日曆清單、活動瀏覽或補排活動功能，也沒有網路權限。
+預設關閉。在「日曆通知響鈴／設定」主動啟用並授予通知存取、精確鬧鐘及 Junba 通知權限後，只轉接 `com.google.android.calendar` 實際到達的新提醒通知。由 Junba 透過 AlarmManager 和前景服務播放系統預設鬧鐘鈴聲，**不是在原廠時鐘新增項目**。月份瀏覽另由 READ_CALENDAR 權限控制，不修改來源活動、不補排舊鏡像，沒有網路權限。
 
 Junba 通知與鬧鐘通知頻道也必須允許，否則不新增響鈴，避免缺少停止控制。Google 日曆原通知必須開啟；原日曆提示可能一起響。通知摘要、持續通知與非提醒分類會忽略；相同通知內容、短時間更新及來源指定只提示一次的更新會去重。授權時不重播舊通知。通知未送達、OEM 背景限制、勿擾或靜音可能影響響鈴，仍須真機驗證。系統的通知存取授權較廣，本程式在讀取文字前先排除其他 App。
 
@@ -35,14 +41,14 @@ gradle --no-daemon --max-workers=2 assembleDebug assembleRelease testDebugUnitTe
 python3 tests/test_release_signing.py app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/debug/app-debug.apk -v
 ```
 
-GitHub Actions：`Build Android APK (debug development only)`。選擇這次修改所在分支執行，成功後下載 `JunbaSmartReminder-R8-controls-debug-APK`，解壓後安裝 `app-debug.apk`。ZIP 另附 APK 摘要、簽章憑證與來源 commit。
+GitHub Actions：`Build Android APK (debug development only)`。選擇這次修改所在分支執行，成功後下載 `JunbaSmartReminder-R9-calendar-debug-APK`，解壓後安裝 `app-debug.apk`。ZIP 另附 APK 摘要、簽章憑證與來源 commit。
 
 **不同 Actions 執行的 debug 簽章不保證相同，不能保證直接覆蓋手機舊版。不要未備份就解除安裝。** 固定 release 簽章流程仍需由儲存庫管理者設定 Secrets 與憑證指紋，詳見 [APK_SIGNING.md](docs/APK_SIGNING.md)；未設定不會產生正式簽章 APK。
 
 ## 驗證與資料
 
-自動檢查涵蓋停止／延後狀態、投遞去重、日期／時區、空白欄位、既有資料保留、編輯與儲存去重、通知來源與更新過濾、簽章流程。沒有在雲端執行 vivo 真機的日期核對、鎖屏及通知響鈴，請依 [R8 驗證清單](docs/R8_ALARM_CONTROLS.md) 測試。
+自動檢查涵蓋停止／延後狀態、投遞去重、日期／時區、空白欄位、既有資料保留、編輯與儲存去重、通知來源與更新過濾、簽章流程；R9 另涵蓋全天／跨日、帳號選取延續、通知對應與測試燈號。沒有在雲端執行 vivo 真機的日期核對、鎖屏及通知響鈴，請依 [R9 驗證清單](docs/R9_CALENDAR_MONTH.md) 測試。
 
-備份可匯出記事、原廠請求及響鈴／延後紀錄，寫入後重新讀取比對；不含原廠時鐘資料、舊 API Key，也沒有直接覆蓋資料的匯入功能。舊加密 Key 保留在原 App 私有儲存區但不再使用。舊本機日曆鏡像排程停止，來源日曆活動不改動。
+備份可匯出記事、原廠請求及響鈴／延後紀錄，寫入後重新讀取比對；不含原廠時鐘資料、舊 API Key，也沒有直接覆蓋資料的匯入功能。舊加密 Key 保留在原 App 私有儲存區但不再使用。舊本機日曆鏡像排程維持停止，來源日曆活動不改動。
 
-開發先閱讀 [AGENTS.md](AGENTS.md)。其他 R6／AI 交接文件屬歷史設計，R8 以本文件與使用者最新指示為準。私人記事、日曆資料、API Key、keystore 不得提交至 GitHub。
+開發先閱讀 [AGENTS.md](AGENTS.md)。其他 R6／AI 交接文件屬歷史設計，R9 以本文件與使用者最新指示為準。私人記事、日曆資料、API Key、keystore 不得提交至 GitHub。

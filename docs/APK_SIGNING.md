@@ -64,7 +64,7 @@ Set-Clipboard -Value ''
 
 在包含此 workflow 的分支完成簽章設定並成功執行後，才會出現可下載的正式附件：
 
-**Actions → Build Signed Android APK → 成功的執行紀錄 → Artifacts → JunbaSmartReminder-R8-controls-signed-release-APK**。
+**Actions → Build Signed Android APK → 成功的執行紀錄 → Artifacts → JunbaSmartReminder-R9-calendar-signed-release-APK**。
 
 下載 ZIP 後取出 `app-release.apk`。附件還包含 `SHA256SUMS.txt` 與 `signing-certificate.txt`，可比對檔案與憑證。現階段尚未設定正式秘密、未執行遠端 workflow，也沒有發布新版；本機驗證的測試金鑰不會交付給使用者。
 
