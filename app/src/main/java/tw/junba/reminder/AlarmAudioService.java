@@ -10,6 +10,9 @@ import org.json.JSONObject;
 /** A single Junba sound player. Its controls also live in MainActivity. */
 public final class AlarmAudioService extends Service {
     static final String PLAY="tw.junba.reminder.RING",STOP="tw.junba.reminder.STOP",SNOOZE="tw.junba.reminder.SNOOZE";
+    private static volatile boolean serviceAlive;
+    static boolean alive(){return serviceAlive;}
+    @Override public void onCreate(){super.onCreate();serviceAlive=true;}
     private Ringtone ringtone;
     private String activeKey="";
     private final Handler timeout=new Handler(Looper.getMainLooper());
@@ -39,7 +42,8 @@ public final class AlarmAudioService extends Service {
             if(record==null){if(activeKey.isEmpty())stopSelf();return START_NOT_STICKY;}
             stopRing();activeKey=key;AlarmReceiver.ensureChannel(this);
             Notification note=new Notification.Builder(this,AlarmReceiver.CHANNEL)
-                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle("Junba 鬧鐘正在響鈴")
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm).setContentTitle("🟠 正在響鈴｜"+(LinkModel.test(record)?"測試":LinkModel.calendar(record)?"Google 日曆":"記事"))
+                .setColor(0xffff9800).setColorized(true)
                 .setContentText(record.optString("title")).setStyle(new Notification.BigTextStyle().bigText(record.optString("title")+"\n若未顯示按鈕，點此開啟 App 停止或延後。"))
                 .setContentIntent(openPendingIntent(this)).setOngoing(true).setCategory(Notification.CATEGORY_ALARM)
                 .setVisibility(Notification.VISIBILITY_PRIVATE).setOnlyAlertOnce(true)
@@ -67,7 +71,7 @@ public final class AlarmAudioService extends Service {
     private void stopRing(){if(ringtone!=null){try{ringtone.stop();}catch(Exception ignored){}ringtone=null;}}
     @Override public void onDestroy(){
         timeout.removeCallbacks(stopLater);stopRing();AlarmStore.finish(this,activeKey,"stopped");
-        stopForeground(STOP_FOREGROUND_REMOVE);super.onDestroy();
+        stopForeground(STOP_FOREGROUND_REMOVE);serviceAlive=false;super.onDestroy();
     }
     @Override public IBinder onBind(Intent i){return null;}
 }

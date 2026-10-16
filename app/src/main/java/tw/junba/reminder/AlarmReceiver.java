@@ -22,7 +22,9 @@ public class AlarmReceiver extends BroadcastReceiver {
             if(relay&&!CalendarNotificationListener.enabled(c))return;
             if(AlarmStore.FIRE.equals(event.getAction())){
                 record=AlarmStore.find(c,event.getStringExtra("alarm_key"));if(record==null)return;
-                if("calendar".equals(record.optString("source"))&&!CalendarNotificationListener.enabled(c)){AlarmStore.cancel(c,record.optString("key"));return;}
+                if((LinkModel.calendar(record)&&!CalendarNotificationListener.enabled(c))||LinkPolicy.recordDisabled(c,record)){AlarmStore.cancel(c,record.optString("key"),false);return;}
+                if("note_link".equals(record.optString("source"))&&!LinkPolicy.noteEnabled(c,record.optInt("noteId"),false)){AlarmStore.cancel(c,record.optString("key"),false);return;}
+                if(LinkModel.managed(record)&&!LinkPolicy.prelink(c)){AlarmStore.cancel(c,record.optString("key"),false);return;}
                 if(!AlarmRecord.pending(record)||record.optInt("generation")!=event.getIntExtra("generation",-1))return;
             }else{
                 if(event.getAction()==null){
@@ -41,6 +43,7 @@ public class AlarmReceiver extends BroadcastReceiver {
                 .putExtra("alarm_key",record.optString("key")).putExtra("generation",record.optInt("generation"))
                 .putExtra("duration_ms",record.optLong("testDurationMs",120000));
             c.startForegroundService(audio);
+            if("note_link".equals(record.optString("source")))CalendarLinkSync.request(c,null);
         }catch(Exception ex){
             if(record!=null)try{AlarmStore.status(c,record.optString("key"),"failed","響鈴服務遭系統限制，請檢查背景權限。");}catch(Exception ignored){}
         }finally{

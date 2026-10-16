@@ -9,6 +9,7 @@ public class BootReceiver extends BroadcastReceiver {
             AlarmReceiver.ensureChannel(context);
             ReminderStore.reschedule(context);
             LegacyCalendarCleanup.stop(context);
+            CalendarRefreshJob.register(context);CalendarLinkSync.request(context,null);
             AlarmStore.restore(context,Intent.ACTION_BOOT_COMPLETED.equals(action)||Intent.ACTION_MY_PACKAGE_REPLACED.equals(action));
         }
     }

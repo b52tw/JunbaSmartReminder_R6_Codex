@@ -15,6 +15,7 @@ final class CalendarModel {
     static final class Event {
         final long id,begin,end;final Source calendar;final String title;final boolean allDay;
         final List<Integer> minutes=new ArrayList<>();
+        final List<Long> alertTimes=new ArrayList<>();
         Event(long id,long begin,long end,Source calendar,String title,boolean allDay){
             this.id=id;this.begin=begin;this.end=end;this.calendar=calendar;this.title=safe(title);this.allDay=allDay;
         }
@@ -89,6 +90,7 @@ final class CalendarModel {
     static boolean belongs(JSONObject record,Event event){
         return record.has("eventId")&&record.has("eventBegin")&&record.optLong("eventId")==event.id&&record.optLong("eventBegin")==event.begin&&record.optLong("calendarId")==event.calendar.id;
     }
+    /** Receipt inventory only; R10 connection lamps use LinkModel. */
     static boolean received(JSONArray records,Event event){
         for(int i=0;i<records.length();i++){JSONObject r=records.optJSONObject(i);
             if(r!=null&&"calendar".equals(r.optString("source"))&&belongs(r,event))return true;}

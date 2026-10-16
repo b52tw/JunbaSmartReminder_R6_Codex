@@ -22,10 +22,10 @@ final class AlarmRecord {
     static JSONObject ringing(JSONObject old,int generation,long now,long duration) throws JSONException {
         if(!pending(old)||old.optInt("generation")!=generation||old.optLong("when")>now+2000)return null;
         return new JSONObject(old.toString()).put("status","ringing").put("firedAt",now)
-            .put("activeUntil",Math.addExact(now,duration)).put("error","");
+            .put("activeUntil",Math.addExact(now,duration)).put("systemScheduled",false).put("error","");
     }
     static JSONObject finished(JSONObject old,String status,long now) throws JSONException {
         if(!"ringing".equals(old.optString("status")))return old;
-        return new JSONObject(old.toString()).put("status",status).put("changedAt",now);
+        return new JSONObject(old.toString()).put("status",status).put("systemScheduled",false).put("changedAt",now);
     }
 }

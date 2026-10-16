@@ -49,6 +49,12 @@ public final class ReminderStore {
         }
         return result;
     }
+    static void retireLegacy(Context c,int id) throws JSONException {
+        android.content.SharedPreferences prefs=c.getSharedPreferences("junba",0);JSONArray notes=new JSONArray(prefs.getString("notes","[]"));boolean changed=false;
+        for(int i=0;i<notes.length();i++){JSONObject note=notes.optJSONObject(i);if(note!=null&&note.optInt("id")==id&&note.optBoolean("remind",true)){note.put("remind",false);changed=true;}}
+        if(changed&&!prefs.edit().putString("notes",notes.toString()).commit())throw new IllegalStateException("記事排程設定未寫入。");
+        cancel(c,id);
+    }
     private static String safe(String s){return s==null||s.trim().isEmpty()?"無訊息":s.trim();}
     static void updateFull(Context c,int id,String title,String body,long timestamp,int advanceMin,String repeat,boolean remind) throws JSONException {
         JSONArray a=all(c);
@@ -80,6 +86,7 @@ public final class ReminderStore {
             }
             if(!prefs.edit().putString("notes",b.toString()).commit())throw new IllegalStateException();
             try{cancel(c,id);}catch(RuntimeException ignored){}
+            AlarmStore.cancelNote(c,id,true);
         }catch(JSONException e){throw new IllegalStateException("記事資料無法讀取，未刪除。",e);}
     }
     static PendingIntent intent(Context c,JSONObject o) {

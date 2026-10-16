@@ -73,11 +73,15 @@ public final class CalendarNotificationListener extends NotificationListenerServ
                 CalendarNotificationRule.duplicate((note.flags&Notification.FLAG_ONLY_ALERT_ONCE)!=0,
                     event.getPostTime(),now,prior.optLong("post"),prior.optLong("delivered"))))return;
             JSONObject metadata=new JSONObject().put("notificationTitle",title==null?"":title.toString())
-                .put("notificationText",body==null?"":body.toString()).put("notificationPostTime",event.getPostTime());
+                .put("notificationText",body==null?"":body.toString()).put("notificationPostTime",event.getPostTime())
+                .put("notificationHash",contentHash).put("linkId","notification:"+key+":"+contentHash);
             JSONObject record=AlarmStore.create(this,text,"calendar",key,now+1000L,metadata);
             // Matching is optional and asynchronous; it never delays or gates the proven alarm path.
             CalendarRepository.matchLater(this,record.optString("key"),title==null?"":title.toString(),event.getPostTime());
-            AlarmStore.scheduleNew(this,record);
+            int route=AlarmStore.notificationRoute(this,title==null?"":title.toString(),event.getPostTime());
+            if(route==2||LinkPolicy.disabled(this,record.optString("linkId")))AlarmStore.status(this,record.optString("key"),"unlinked","已移除此連動；Google 原通知保留。");
+            else if(route==1)AlarmStore.status(this,record.optString("key"),"received","通知已收到，已有預排鬧鈴，不重複響鈴。");
+            else AlarmStore.scheduleNew(this,record);
             JSONObject trimmed=new JSONObject();Iterator<String> names=history.keys();int count=0;
             while(names.hasNext()&&count<63){String old=names.next();JSONObject item=history.optJSONObject(old);
                 if(item!=null&&now-item.optLong("delivered")<7L*86400000L){trimmed.put(old,item);count++;}}

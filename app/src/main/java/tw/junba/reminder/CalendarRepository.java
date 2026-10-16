@@ -16,8 +16,8 @@ final class CalendarRepository {
     private static final ExecutorService MATCHES=Executors.newSingleThreadExecutor();
     static boolean granted(Context c){return c.checkSelfPermission(Manifest.permission.READ_CALENDAR)==PackageManager.PERMISSION_GRANTED;}
     static final class Snapshot {
-        final List<CalendarModel.Source> sources;final List<CalendarModel.Event> events;final boolean truncated;
-        Snapshot(List<CalendarModel.Source> sources,List<CalendarModel.Event> events,boolean truncated){this.sources=sources;this.events=events;this.truncated=truncated;}
+        final List<CalendarModel.Source> sources;final List<CalendarModel.Event> events;final boolean truncated;final boolean remindersComplete,alertsComplete;
+        Snapshot(List<CalendarModel.Source> sources,List<CalendarModel.Event> events,boolean truncated,boolean complete,boolean alertsComplete){this.sources=sources;this.events=events;this.truncated=truncated;this.remindersComplete=complete;this.alertsComplete=alertsComplete;}
     }
     static List<CalendarModel.Source> sources(Context c){
         List<CalendarModel.Source> out=new ArrayList<>();
@@ -48,20 +48,29 @@ final class CalendarRepository {
         }
         Map<Long,List<CalendarModel.Event>> byEvent=new HashMap<>();
         for(CalendarModel.Event event:events)byEvent.computeIfAbsent(event.id,k->new ArrayList<>()).add(event);
-        List<Long> ids=new ArrayList<>(byEvent.keySet());
+        boolean complete=true;List<Long> ids=new ArrayList<>(byEvent.keySet());
         for(int startAt=0;startAt<ids.size();startAt+=400){
             List<Long> batch=ids.subList(startAt,Math.min(ids.size(),startAt+400));String[] args=new String[batch.size()];
             for(int i=0;i<batch.size();i++)args[i]=Long.toString(batch.get(i));
             String where="event_id IN ("+String.join(",",Collections.nCopies(batch.size(),"?"))+")";
             try(Cursor cursor=c.getContentResolver().query(CalendarContract.Reminders.CONTENT_URI,new String[]{"event_id","minutes","method"},where,args,null)){
-                if(cursor==null)continue;
+                if(cursor==null){complete=false;continue;}
                 while(cursor.moveToNext()){
                     int method=cursor.getInt(2);if(method!=0&&method!=1&&method!=4)continue;
                     for(CalendarModel.Event event:byEvent.get(cursor.getLong(0)))event.minutes.add(cursor.getInt(1));
                 }
             }
         }
-        return new Snapshot(sources,events,truncated);
+        // Some Google/all-day default reminder times exist only as provider alarm rows.
+        boolean alertsComplete=true;
+        try(Cursor cursor=c.getContentResolver().query(CalendarContract.CalendarAlerts.CONTENT_URI,new String[]{"event_id","begin","alarmTime"},"alarmTime>=? AND alarmTime<=?",new String[]{""+start,""+finish},null)){
+            if(cursor==null)alertsComplete=false;
+            if(cursor!=null)while(cursor.moveToNext()){
+                List<CalendarModel.Event> occurrences=byEvent.get(cursor.getLong(0));if(occurrences==null)continue;
+                for(CalendarModel.Event event:occurrences)if(event.begin==cursor.getLong(1))event.alertTimes.add(cursor.getLong(2));
+            }
+        }catch(RuntimeException ignored){alertsComplete=false;/* Preserve previous alarm-row links when this optional provider table is unavailable. */}
+        return new Snapshot(sources,events,truncated,complete,alertsComplete);
     }
     static boolean selected(Context c,CalendarModel.Source source){
         SharedPreferences view=c.getSharedPreferences("junba_calendar_view",0),old=c.getSharedPreferences("MainActivity",0);

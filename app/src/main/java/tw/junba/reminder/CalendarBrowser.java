@@ -14,15 +14,15 @@ import org.json.*;
 
 /** Month browsing is read-only and separate from the notification-driven alarm path. */
 final class CalendarBrowser implements AutoCloseable {
-    private final Activity activity;private final Runnable redraw,records,settings,googleTest;
-    private final Consumer<CalendarModel.Event> test,stock,link;
+    private final Activity activity;private final Runnable redraw,records,settings,refresh;
+    private final Consumer<CalendarModel.Event> test,stock,link,unlink;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();private final Handler main=new Handler(Looper.getMainLooper());
     private YearMonth month=YearMonth.now();private LocalDate day=LocalDate.now();
     private CalendarRepository.Snapshot snapshot;private YearMonth loaded;
-    private Map<LocalDate,List<CalendarModel.Event>> indexed=new HashMap<>();private Set<String> receivedKeys=new HashSet<>();
+    private Map<LocalDate,List<CalendarModel.Event>> indexed=new HashMap<>();private Map<String,Integer> lamps=new HashMap<>();
     private boolean loading,closed;private String error="";private int generation,dayPage;
-    CalendarBrowser(Activity activity,Runnable redraw,Runnable records,Runnable settings,Runnable googleTest,Consumer<CalendarModel.Event> test,Consumer<CalendarModel.Event> stock,Consumer<CalendarModel.Event> link){
-        this.activity=activity;this.redraw=redraw;this.records=records;this.settings=settings;this.googleTest=googleTest;this.test=test;this.stock=stock;this.link=link;
+    CalendarBrowser(Activity activity,Runnable redraw,Runnable records,Runnable settings,Runnable refresh,Consumer<CalendarModel.Event> test,Consumer<CalendarModel.Event> stock,Consumer<CalendarModel.Event> link,Consumer<CalendarModel.Event> unlink){
+        this.activity=activity;this.redraw=redraw;this.records=records;this.settings=settings;this.refresh=refresh;this.test=test;this.stock=stock;this.link=link;this.unlink=unlink;
         try{day=LocalDate.parse(activity.getSharedPreferences("junba_calendar_view",0).getString("day",day.toString()));month=YearMonth.from(day);}catch(Exception ignored){}
     }
     void invalidate(){generation++;loading=false;snapshot=null;loaded=null;error="";}
@@ -54,9 +54,10 @@ final class CalendarBrowser implements AutoCloseable {
                 try{activity.startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.parse("package:"+activity.getPackageName())));}catch(Exception ignored){}
             });return;
         }
-        text(root,"🔴 已收到並對應真實 Google 通知；灰點只表示有活動。測試會另列，不點紅燈。生日／Google 工作僅能顯示手機日曆有提供的項目。",15);
+        text(root,"🔴 已連動 Junba 系統鬧鈴　🟠 正在響鈴　○ 未連動／已移除。測試另用藍色；生日／工作以手機日曆提供資料為準。",15);
         button(root,"選擇帳號／日曆",this::accounts);
-        button(root,"重新讀取",()->{invalidate();redraw.run();});
+        button(root,"刷新 Google 日曆與鬧鈴連動",refresh);
+        text(root,CalendarLinkSync.status(activity),14);
         LinearLayout nav=new LinearLayout(activity);root.addView(nav);
         Button previous=new Button(activity);previous.setText("‹");nav.addView(previous,new LinearLayout.LayoutParams(0,-2,1));previous.setOnClickListener(v->{YearMonth m=month.minusMonths(1);choose(m.atDay(Math.min(day.getDayOfMonth(),m.lengthOfMonth())));});
         TextView title=text(nav,month.getYear()+" 年 "+month.getMonthValue()+" 月",20);title.setGravity(android.view.Gravity.CENTER);title.setLayoutParams(new LinearLayout.LayoutParams(0,-2,3));
@@ -70,8 +71,11 @@ final class CalendarBrowser implements AutoCloseable {
         if(snapshot.sources.isEmpty())text(root,"尚未找到手機日曆。請先在 Google 日曆完成帳號同步。",16);
         else if(snapshot.events.isEmpty())text(root,"此月在所選帳號／日曆中沒有可讀活動；可調整勾選。",16);
         if(snapshot.truncated)text(root,"本月超過 5,000 筆，僅顯示前 5,000 筆，請減少勾選日曆。",15);
-        JSONArray receipts=AlarmStore.all(activity);receivedKeys=new HashSet<>();
-        for(int i=0;i<receipts.length();i++){JSONObject receipt=receipts.optJSONObject(i);if(receipt!=null&&"calendar".equals(receipt.optString("source")))receivedKeys.add(CalendarModel.recordEventKey(receipt));}
+        JSONArray receipts=AlarmStore.all(activity);lamps=new HashMap<>();long now=System.currentTimeMillis();boolean capable=CalendarNotificationListener.enabled(activity)&&AlarmStore.notificationsVisible(activity)&&ReminderStore.canExact(activity);
+        for(int i=0;i<receipts.length();i++){JSONObject receipt=receipts.optJSONObject(i);if(receipt==null||LinkModel.test(receipt))continue;
+            String key=CalendarModel.recordEventKey(receipt);if(key.isEmpty())continue;
+            int lamp=LinkModel.ringing(receipt,now)?2:LinkModel.linked(receipt,now,capable)?1:0;
+            lamps.put(key,Math.max(lamps.getOrDefault(key,0),lamp));}
         grid(root);
         text(root,day+" 的活動",21);List<CalendarModel.Event> daily=indexed.getOrDefault(day,Collections.emptyList());
         button(root,"測試這一天的活動響鈴…",()->{
@@ -79,7 +83,6 @@ final class CalendarBrowser implements AutoCloseable {
             String[] names=new String[daily.size()];for(int i=0;i<names.length;i++)names[i]=daily.get(i).title+" · "+daily.get(i).calendar.label();
             new AlertDialog.Builder(activity).setTitle("選一筆活動測試（5 秒）").setItems(names,(d,w)->test.accept(daily.get(w))).setNegativeButton("取消",null).show();
         });
-        button(root,"開 Google 建立真正的測試通知…",googleTest);
         if(daily.isEmpty())text(root,"本日沒有可讀活動。Google 工作與部分生日可能未提供給手機日曆，並不代表 Google 沒有資料。",16);
         if(dayPage*20>=daily.size())dayPage=0;
         int pageStart=dayPage*20,pageEnd=Math.min(daily.size(),pageStart+20);
@@ -94,21 +97,28 @@ final class CalendarBrowser implements AutoCloseable {
             text(card,event.allDay?"全天（依日期顯示）":java.time.format.DateTimeFormatter.ofPattern("MM/dd HH:mm").format(Instant.ofEpochMilli(event.begin).atZone(ZoneId.systemDefault()))+" 起",16);
             String reminder=event.minutes.isEmpty()?"未提供提醒設定":event.minutes.toString().replace("-1","預設時間未提供")+" 分鐘前";
             text(card,"來源提醒："+reminder,14);
-            boolean received=receivedKeys.contains(event.key());TextView lamp=text(card,received?"● 已接受真實通知":"○ 尚無已對應的真實通知",17);lamp.setTextColor(received?0xffff6868:0xffbbbbbb);
+            int state=lamps.getOrDefault(event.key(),0);boolean linked=state>0;
+            if(state==2)card.setBackgroundColor(0xff623b10);
+            TextView lamp=text(card,state==2?"🟠 此筆正在響鈴":linked?"🔴 已連動 Junba 系統鬧鈴":"○ 未連動／已移除連動",17);lamp.setTextColor(state==2?0xffffbc55:linked?0xffff6868:0xffbbbbbb);
+            int shown=0;for(int n=0;n<receipts.length()&&shown<5;n++){JSONObject r=receipts.optJSONObject(n);
+                if(r!=null&&!LinkModel.test(r)&&CalendarModel.belongs(r,event)&&r.has("linkId")&&r.optBoolean("scheduleAccepted")){
+                    text(card,(r.optBoolean("linkEnabled")?"連動時間：":"已移除：")+new java.text.SimpleDateFormat("MM/dd HH:mm",Locale.TAIWAN).format(new Date(r.optLong("when"))),14);shown++;}}
+            if(event.allDay&&event.alertTimes.isEmpty())text(card,"來源未提供全天通知的確切時間，可自行指定 Junba 時間；不改 Google 原通知。",14);
             for(int n=receipts.length()-1;n>=0;n--){JSONObject record=receipts.optJSONObject(n);if(record==null||!CalendarModel.belongs(record,event))continue;
                 if("calendar".equals(record.optString("source"))){text(card,"通知收到："+new java.text.SimpleDateFormat("MM/dd HH:mm",Locale.TAIWAN).format(new Date(record.optLong("receivedAt")))+
                     ("manual".equals(record.optString("matchKind"))?"（本人對應）":"provider_alert".equals(record.optString("matchKind"))?"（依手機提醒紀錄對應）":"（依名稱與提醒時間唯一對應）"),14);break;}
             }
             for(int n=receipts.length()-1;n>=0;n--){JSONObject record=receipts.optJSONObject(n);
-                if(record!=null&&"calendar_test".equals(record.optString("source"))&&CalendarModel.belongs(record,event)){
+                if(record!=null&&LinkModel.test(record)&&CalendarModel.belongs(record,event)){
                     text(card,record.has("testConfirmedAt")?"測試：本人已確認聽見":"測試紀錄："+CalendarModel.testStatus(record)+"，不代表 Google 已送通知",14);break;}
             }
-            button(card,"測試此活動響鈴",()->test.accept(event));
+            button(card,"測試此活動的鬧鈴連動",()->test.accept(event));
             button(card,"交給原廠建立單筆鬧鐘…",()->stock.accept(event));
-            if(!received)button(card,"對應已收到的 Google 通知…",()->link.accept(event));
+            button(card,linked?"查看／重新連動提醒時間…":"連動此活動的提醒…",()->link.accept(event));
+            if(linked)button(card,"只移除 Junba 連動（保留 Google）",()->unlink.accept(event));
         }
         button(root,"查看通知與測試紀錄",records);button(root,"通知連動與權限設定",settings);
-        text(root,"帳號勾選篩選瀏覽與測試；現有 Google 通知響鈴仍由連動開關控制。無法唯一辨識的通知留在紀錄，不猜測活動或帳號。",14);
+        text(root,"帳號勾選也控制自動預排來源。預排未來 90 天、最多 250 筆；超出或未提供時間者可自行連動。Google 原活動與通知維持不變。",14);
     }
     private void grid(LinearLayout root){
         LinearLayout weekdays=new LinearLayout(activity);root.addView(weekdays);
@@ -118,10 +128,10 @@ final class CalendarBrowser implements AutoCloseable {
             if(cell%7==0){row=new LinearLayout(activity);root.addView(row);}
             TextView v=new TextView(activity);v.setTextSize(16);v.setGravity(17);v.setPadding(0,dp(4),0,dp(4));row.addView(v,new LinearLayout.LayoutParams(0,dp(64),1));
             int number=cell-offset+1;if(number<1||number>month.lengthOfMonth())continue;
-            LocalDate date=month.atDay(number);int count=0,red=0;
-            for(CalendarModel.Event event:indexed.getOrDefault(date,Collections.emptyList())){count++;if(receivedKeys.contains(event.key()))red++;}
-            v.setText(number+"\n"+(red>0?"●":count>0?"·":""));v.setTextColor(red>0?0xffff6868:Color.WHITE);
-            if(date.equals(day))v.setBackgroundColor(0xff315158);v.setContentDescription(date+"，"+count+" 筆活動，"+red+" 筆已收到對應通知");v.setOnClickListener(view->choose(date));
+            LocalDate date=month.atDay(number);int count=0,red=0,ringing=0;
+            for(CalendarModel.Event event:indexed.getOrDefault(date,Collections.emptyList())){count++;if(lamps.getOrDefault(event.key(),0)>0)red++;if(lamps.getOrDefault(event.key(),0)==2)ringing++;}
+            v.setText(number+"\n"+(red>0?"●":count>0?"·":""));v.setTextColor(ringing>0?0xffffbc55:red>0?0xffff6868:Color.WHITE);
+            if(date.equals(day))v.setBackgroundColor(0xff315158);v.setContentDescription(date+"，"+count+" 筆活動，"+red+" 筆已連動、"+ringing+" 筆正在響鈴");v.setOnClickListener(view->choose(date));
         }
     }
     private void accounts(){
@@ -129,7 +139,7 @@ final class CalendarBrowser implements AutoCloseable {
         List<CalendarModel.Source> sources=snapshot.sources;String[] labels=new String[sources.size()];boolean[] chosen=new boolean[sources.size()];
         for(int i=0;i<labels.length;i++){CalendarModel.Source source=sources.get(i);labels[i]=source.account+"\n"+source.name+("com.google".equals(source.type)?"":"（"+source.type+"）");chosen[i]=CalendarRepository.selected(activity,source);}
         new AlertDialog.Builder(activity).setTitle("選擇帳號與日曆（可複選）").setMultiChoiceItems(labels,chosen,(d,i,on)->chosen[i]=on)
-            .setPositiveButton("套用",(d,w)->{SharedPreferences.Editor edit=activity.getSharedPreferences("junba_calendar_view",0).edit();for(int i=0;i<chosen.length;i++)edit.putBoolean("cal_"+sources.get(i).id,chosen[i]);edit.apply();invalidate();redraw.run();})
+            .setPositiveButton("套用",(d,w)->{SharedPreferences.Editor edit=activity.getSharedPreferences("junba_calendar_view",0).edit();for(int i=0;i<chosen.length;i++)edit.putBoolean("cal_"+sources.get(i).id,chosen[i]);edit.apply();invalidate();refresh.run();redraw.run();})
             .setNegativeButton("取消",null).show();
     }
     @Override public void close(){closed=true;generation++;worker.shutdownNow();main.removeCallbacksAndMessages(null);}
